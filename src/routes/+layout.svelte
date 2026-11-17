@@ -28,15 +28,19 @@
 		live.historyLimit = core.settings?.requestHistoryLimit ?? 2000;
 	});
 
-	// New core process → new session counters.
-	$effect(() => {
-		if (core.status?.startedAt) untrack(() => live.resetSession());
-	});
+	let session: string | null = null;
 
-	// Stream live data whenever a core is reachable.
+	// Reset counters on stop or a new process, while preserving them on config reload.
 	$effect(() => {
 		const api = core.api;
-		untrack(() => (api ? live.connect(api) : live.disconnect()));
+		const status = core.status;
+		const nextSession = status?.running ? `${status.pid}:${status.startedAt}` : null;
+		untrack(() => {
+			live.disconnect();
+			if (nextSession !== session || !api) live.resetSession();
+			session = nextSession;
+			if (api) live.connect(api);
+		});
 	});
 </script>
 

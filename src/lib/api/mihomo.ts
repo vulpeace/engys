@@ -148,6 +148,7 @@ export class Mihomo {
 		const connect = () => {
 			ws = new WebSocket(url);
 			ws.onmessage = (ev) => {
+				if (closed) return;
 				try {
 					onMessage(JSON.parse(ev.data));
 				} catch {

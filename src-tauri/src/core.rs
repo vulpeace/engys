@@ -93,10 +93,25 @@ impl CoreManager {
     /// ip rules on a clean shutdown.
     pub fn shutdown_blocking(&mut self) {
         self.generation += 1;
-        if let Some(r) = self.running.take() {
-            terminate(r.child, Duration::from_secs(3));
+        if let Some(r) = self.running.as_mut() {
+            match terminate(&mut r.child, Duration::from_secs(3)) {
+                Ok(()) => { self.running = None; }
+                Err(error) => {
+                    log::error!("Core shutdown failed: {error}");
+                    self.last_error = Some(error.to_string());
+                }
+            }
         }
     }
+}
+
+/// A response from an old core must never count as readiness for a new child.
+fn ensure_controller_available(port: u16) -> Result<()> {
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+        .map(drop)
+        .map_err(|error| Error::msg(format!(
+            "Cannot start core: controller address 127.0.0.1:{port} is unavailable ({error}). Another core may still be running. Stop it or choose a different controller port in Settings."
+        )))
 }
 
 pub fn controller_url(port: u16) -> String {
@@ -435,6 +450,7 @@ async fn start_inner(app: AppHandle) -> Result<CoreStatus> {
     let (bin, profile_id, settings) = prepare(&app).await?;
     let core_dir = state.paths.core_dir.clone();
     let controller = controller_url(settings.controller_port);
+    ensure_controller_available(settings.controller_port)?;
 
     let generation = {
         let mut core = state.core.lock().unwrap();
@@ -459,6 +475,7 @@ async fn start_inner(app: AppHandle) -> Result<CoreStatus> {
         pump_logs(app.clone(), core.logs.clone(), child.stderr.take().unwrap());
         core.generation += 1;
         core.last_error = None;
+        log::info!("Started core pid={} controller={controller}", child.id());
         core.running = Some(Running {
             child,
             controller: controller.clone(),
@@ -543,21 +560,35 @@ fn spawn_watcher(app: AppHandle, generation: u64) {
 
 /// Ask the core to exit (SIGTERM on Unix) so it can tear down TUN routes,
 /// then force-kill after `grace`.
-fn terminate(mut child: Child, grace: Duration) {
+fn terminate(child: &mut Child, grace: Duration) -> Result<()> {
+    let pid = child.id();
+    if let Some(status) = child.try_wait()? {
+        log::info!("Core pid={pid} already exited: {status}");
+        return Ok(());
+    }
     #[cfg(unix)]
     // SAFETY: plain signal to our own child's pid.
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGTERM);
+    if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if child.try_wait()?.is_some() { return Ok(()); }
+        return Err(Error::msg(format!("Could not stop core pid={pid}: {error}")));
     }
     let deadline = std::time::Instant::now() + grace;
     while std::time::Instant::now() < deadline {
-        if let Ok(Some(_)) = child.try_wait() {
-            return;
+        if let Some(status) = child.try_wait()? {
+            log::info!("Stopped core pid={pid}: {status}");
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    log::warn!("Core pid={pid} did not stop within the grace period; killing it");
+    if let Err(error) = child.kill() {
+        if child.try_wait()?.is_some() { return Ok(()); }
+        return Err(Error::msg(format!("Could not kill core pid={pid}: {error}")));
+    }
+    let status = child.wait()?;
+    log::info!("Killed core pid={pid}: {status}");
+    Ok(())
 }
 
 pub async fn stop(app: AppHandle) -> Result<CoreStatus> {
@@ -585,10 +616,27 @@ pub async fn stop_locked(app: AppHandle, remember: bool) -> Result<CoreStatus> {
         core.last_error = None;
         core.running.take()
     };
-    if let Some(r) = running {
-        tauri::async_runtime::spawn_blocking(move || terminate(r.child, Duration::from_secs(3)))
-        .await
-        .map_err(|e| Error::msg(e.to_string()))?;
+    if let Some(mut r) = running {
+        let (r, result) = tauri::async_runtime::spawn_blocking(move || {
+            let result = terminate(&mut r.child, Duration::from_secs(3));
+            (r, result)
+        }).await.map_err(|e| Error::msg(e.to_string()))?;
+        if let Err(error) = result {
+            let generation = {
+                let mut core = state.core.lock().unwrap();
+                core.last_error = Some(error.to_string());
+                core.running = Some(r);
+                core.generation
+            };
+            if remember {
+                if let Err(save_error) = state.session.lock().unwrap().set_running(true) {
+                    log::error!("Could not restore core session after failed stop: {save_error}");
+                }
+            }
+            spawn_watcher(app.clone(), generation);
+            emit_status(&app);
+            return Err(error);
+        }
     }
     emit_status(&app);
     let settings = crate::settings::current(&state);
@@ -638,6 +686,24 @@ pub fn notify_reloaded(app: &AppHandle, profile_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_rejects_an_existing_controller_instead_of_using_its_api() {
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let error = ensure_controller_available(port).unwrap_err().to_string();
+        assert!(error.contains(&format!("127.0.0.1:{port}")));
+        assert!(error.contains("Another core may still be running"));
+        ensure_controller_available(0).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_core_waits_for_the_child_to_exit() {
+        let mut child = Command::new("sleep").arg("60").spawn().unwrap();
+        terminate(&mut child, Duration::from_secs(1)).unwrap();
+        assert!(child.try_wait().unwrap().is_some());
+    }
 
     #[test]
     fn overrides_owned_keys() {

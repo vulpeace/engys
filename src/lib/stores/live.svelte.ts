@@ -34,21 +34,29 @@ class LiveStore {
 	historyLimit = 2000;
 	#map = new Map<string, ConnRecord>();
 	#stops: (() => void)[] = [];
+	#streamGeneration = 0;
+	#trafficTotals = { up: false, down: false };
 
 	connect(api: Mihomo) {
 		this.disconnect();
-		this.#stops.push(api.stream<Traffic>('/traffic', (t) => this.#onTraffic(t)));
+		const generation = this.#streamGeneration;
+		const subscribe = <T>(path: string, callback: (value: T) => void) => api.stream<T>(path, (value) => {
+			if (generation === this.#streamGeneration) callback(value);
+		});
+		this.#stops.push(subscribe<Traffic>('/traffic', (t) => this.#onTraffic(t)));
 		// The first /memory frame is always 0; skip it so the tile doesn't flash.
 		this.#stops.push(
-			api.stream<Memory>('/memory', (m) => {
+			subscribe<Memory>('/memory', (m) => {
 				if (m.inuse) this.memory = m.inuse;
 			}));
 		this.#stops.push(
-			api.stream<ConnectionsSnapshot>('/connections?interval=1000', (s) => this.#onConnections(s))
+			subscribe<ConnectionsSnapshot>('/connections?interval=1000', (s) => this.#onConnections(s))
 		);
 	}
 
 	disconnect() {
+		// Invalidate callbacks before closing sockets, including messages already queued.
+		this.#streamGeneration++;
 		this.#stops.forEach((s) => s());
 		this.#stops = [];
 		this.traffic = { up: 0, down: 0 };
@@ -64,6 +72,7 @@ class LiveStore {
 
 	/** New core session: wipe session counters and chart. */
 	resetSession() {
+		this.#trafficTotals = { up: false, down: false };
 		this.uploadTotal = 0;
 		this.downloadTotal = 0;
 		this.samples = { t: [], up: [], down: [] };
@@ -76,8 +85,7 @@ class LiveStore {
 
 	#onTraffic(t: Traffic) {
 		this.traffic = t;
-		if (t.upTotal !== undefined) this.uploadTotal = t.upTotal;
-		if (t.downTotal !== undefined) this.downloadTotal = t.downTotal;
+		this.#updateTotals('traffic', t.upTotal, t.downTotal);
 		const s = this.samples;
 		const cut = s.t.length >= HISTORY_POINTS ? 1 : 0;
 		this.samples = {
@@ -117,10 +125,19 @@ class LiveStore {
 			}
 		}
 		// Fallback totals for cores that don't send upTotal/downTotal on /traffic.
-		if (this.uploadTotal === 0 && snap.uploadTotal) this.uploadTotal = snap.uploadTotal;
-		if (this.downloadTotal === 0 && snap.downloadTotal) this.downloadTotal = snap.downloadTotal;
+		this.#updateTotals('connections', snap.uploadTotal, snap.downloadTotal);
 		this.activeCount = conns.length;
 		this.#publish();
+	}
+
+	#updateTotals(source: 'traffic' | 'connections', up?: number, down?: number) {
+		for (const [direction, value] of [['up', up], ['down', down]] as const) {
+			if (value === undefined || !Number.isFinite(value) || value < 0) continue;
+			if (source === 'traffic') this.#trafficTotals[direction] = true;
+			else if (this.#trafficTotals[direction]) continue;
+			if (direction === 'up') this.uploadTotal = value;
+			else this.downloadTotal = value;
+		}
 	}
 
 	#publish() {
