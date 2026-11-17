@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { listen } from '@tauri-apps/api/event';
 	import { ArrowDown, ArrowUp, Cable, Play, Square } from '@lucide/svelte';
-	import { Badge, Button, Card, PageHeader, StatTile, toast } from '#lib/ui/index.ts';
+	import { Badge, Button, Card, PageHeader, Select, StatTile, toast } from '#lib/ui/index.ts';
 	import MemoryUsage from '#lib/components/MemoryUsage.svelte';
 	import BandwidthChart from '#lib/components/BandwidthChart.svelte';
 	import TunControl from '#lib/components/TunControl.svelte';
@@ -14,7 +16,36 @@
 	let now = $state(Date.now());
 	let logEl = $state<HTMLPreElement>();
 
-	backend.profilesList().then((p) => (profiles = p));
+	let switchingProfile = $state(false);
+	let selectedProfile = $state('');
+
+	async function refreshProfiles() {
+		profiles = await backend.profilesList();
+		selectedProfile = profiles.active ?? '';
+	}
+
+	onMount(() => {
+		const unlisten = listen<ProfileIndex>('profiles-changed', (event) => {
+			profiles = event.payload;
+			selectedProfile = profiles.active ?? '';
+		}).catch(toast.error);
+		void refreshProfiles().catch(toast.error);
+		return () => { void unlisten.then((stop) => stop?.()); };
+	});
+
+	async function selectProfile(id: string) {
+		if (!id || id === profiles?.active || switchingProfile) return;
+		switchingProfile = true;
+		try {
+			await backend.profileActivate(id);
+			await core.refreshSettings();
+		} catch (e) {
+			toast.error(e);
+		} finally {
+			await refreshProfiles().catch(toast.error);
+			switchingProfile = false;
+		}
+	}
 
 	$effect(() => {
 		const id = setInterval(() => (now = Date.now()), 1000);
@@ -61,12 +92,17 @@
 
 <PageHeader title="Dashboard" subtitle={activeProfile ? `Profile: ${activeProfile.name}` : 'No profile selected'}>
 	{#snippet actions()}
+		<Select label="Active profile" bind:value={selectedProfile}
+			options={profiles?.profiles.map((p) => ({ value: p.id, label: p.name })) ?? []}
+			placeholder={profiles === null ? 'Loading profiles…' : 'No profiles available'}
+			disabled={switchingProfile || core.busy || !profiles?.profiles.length}
+			onValueChange={selectProfile} />
 		{#if core.running}
 			<Badge tone="success">Running · {uptime}</Badge>
 		{:else}
 			<Badge>Stopped</Badge>
 		{/if}
-		<Button variant={core.running ? 'secondary' : 'primary'} loading={core.busy} onclick={() => toggle(!core.running)}>
+		<Button variant={core.running ? 'secondary' : 'primary'} loading={core.busy} disabled={switchingProfile} onclick={() => toggle(!core.running)}>
 			{#if core.running}<Square size={14} /> Stop{:else}<Play size={14} /> Start{/if}
 		</Button>
 	{/snippet}
