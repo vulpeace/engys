@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
-	import { FilePlus, FolderOpen, Link, Pencil, RefreshCw, Trash2, Check, Undo2 } from '@lucide/svelte';
+	import { FilePlus, FolderOpen, Link, Pencil, RefreshCw, Trash2, Check, Undo2, Eye } from '@lucide/svelte';
 	import { ask, open as openFile } from '@tauri-apps/plugin-dialog';
 	import { Badge, Button, Card, Dialog, EmptyState, Meter, PageHeader, TextField, toast } from '#lib/ui/index.ts';
 	import YamlEditor from '#lib/components/YamlEditor.svelte';
@@ -38,6 +38,8 @@ rules:
 	let subIntervalTouched = $state(false);
 	let intervalDrafts = $state<Record<string, string>>({});
 	const validInterval = (input: string | number) => String(input ?? '').trim() !== '' && Number.isInteger(Number(input)) && Number(input) >= 0 && Number(input) <= 4294967295;
+	let previewOpen = $state(false);
+	let preview = $state({ name: '', content: '' });
 	let editorOpen = $state(false);
 	let editing = $state<{ id: string | null; name: string; content: string }>({ id: null, name: '', content: '' });
 
@@ -96,6 +98,18 @@ rules:
 			editorOpen = true;
 		} catch (e) {
 			toast.error(e);
+		}
+	}
+
+	async function viewFinal(p: Profile) {
+		busy[`preview:${p.id}`] = true;
+		try {
+			preview = { name: p.name, content: await backend.profileReadFinal(p.id) };
+			previewOpen = true;
+		} catch (e) {
+			toast.error(e);
+		} finally {
+			busy[`preview:${p.id}`] = false;
 		}
 	}
 
@@ -205,6 +219,7 @@ rules:
 								<RefreshCw size={14} />
 							</Button>
 						{/if}
+						<Button size="sm" icon title="View final config" aria-label="View final config" loading={busy[`preview:${p.id}`]} onclick={() => viewFinal(p)}><Eye size={14} /></Button>
 						<Button size="sm" icon title="Edit" onclick={() => edit(p)}><Pencil size={14} /></Button>
 						<Button size="sm" icon variant="danger" title="Delete" loading={busy[`delete:${p.id}`]} onclick={() => remove(p)}>
 							<Trash2 size={14} />
@@ -229,6 +244,13 @@ rules:
 		<Button variant="primary" loading={busy.sub} disabled={!/^https?:\/\//.test(subUrl.trim()) || !validInterval(String(subInterval))} onclick={addSubscription}>
 			Download
 		</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog bind:open={previewOpen} wide title={`Final config — ${preview.name}`} description="Read-only config generated from this profile with the current settings, rules, and custom proxy groups.">
+	<div class="editor"><YamlEditor value={preview.content} readOnly /></div>
+	{#snippet footer()}
+		<Button onclick={() => (previewOpen = false)}>Close</Button>
 	{/snippet}
 </Dialog>
 

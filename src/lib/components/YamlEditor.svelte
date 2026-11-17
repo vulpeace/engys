@@ -5,7 +5,7 @@
 	import { EditorState } from '@codemirror/state';
 	import { yaml } from '@codemirror/lang-yaml';
 
-	let { value = $bindable('') }: { value?: string } = $props();
+	let { value = $bindable(''), readOnly = false }: { value?: string; readOnly?: boolean } = $props();
 
 	let el: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -28,6 +28,8 @@
 				doc: value,
 				extensions: [
 					basicSetup,
+					EditorState.readOnly.of(readOnly),
+					EditorView.editable.of(!readOnly),
 					yaml(),
 					theme,
 					EditorView.updateListener.of((u) => {

@@ -186,6 +186,12 @@ pub fn profile_read(state: State<'_, AppState>, id: String) -> Result<String> {
 }
 
 #[tauri::command]
+pub fn profile_read_final(state: State<'_, AppState>, id: String) -> Result<String> {
+    let content = state.profiles.lock().unwrap().read_content(&id)?;
+    core::preview_runtime_config(&state, &id, &content).map(|(runtime, _)| runtime)
+}
+
+#[tauri::command]
 pub async fn profile_save(app: AppHandle, state: State<'_, AppState>, id: String, content: String) -> Result<()> {
     let _operation = state.core_operation.lock().await;
     subscription::validate_profile_yaml(&content)?;

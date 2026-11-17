@@ -156,6 +156,7 @@ export const backend = {
 	profileResetUpdateInterval: (id: string) => invoke<Profile>('profile_reset_update_interval', { id }),
 	profileSetUpdateInterval: (id: string, minutes: number) => invoke<Profile>('profile_set_update_interval', { id, minutes }),
 	profileRead: (id: string) => invoke<string>('profile_read', { id }),
+	profileReadFinal: (id: string) => invoke<string>('profile_read_final', { id }),
 	profileSave: (id: string, content: string) => invoke<void>('profile_save', { id, content }),
 	profileRename: (id: string, name: string) => invoke<Profile>('profile_rename', { id, name }),
 	profileDelete: (id: string) => invoke<void>('profile_delete', { id }),

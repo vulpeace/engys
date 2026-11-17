@@ -303,8 +303,24 @@ fn apply_tun(root: &mut Mapping, s: &Settings) {
     }
 }
 
+/// Build the selected profile using the same overrides as core start/reload, without side effects.
+pub fn preview_runtime_config(state: &AppState, profile_id: &str, content: &str) -> Result<(String, Settings)> {
+    let mut settings = state.settings.lock().unwrap().clone().resolve_profile(content)?;
+    let status = state.core.lock().unwrap().status(&settings);
+    if status.running {
+        settings.controller_port = reqwest::Url::parse(&status.controller).ok().and_then(|u| u.port_or_known_default()).unwrap_or(settings.controller_port);
+        settings.secret = status.secret;
+        settings.overrides.extend(["external-controller".into(), "secret".into()]);
+    }
+    let apps = state.app_rules.lock().unwrap().clone();
+    let groups = state.custom_groups.lock().unwrap().for_profile(Some(profile_id)).to_vec();
+    let content = crate::routing::apply_profile(state, Some(profile_id), content)?;
+    let runtime = build_runtime_config_with_groups(&content, &settings, &apps.rules, apps.order_override(Some(profile_id)), &groups)?;
+    Ok((runtime, settings))
+}
+
 /// Write `runtime.yaml` for the active profile and validate it with `mihomo -t`.
-/// Returns (binary, profile id).
+/// Returns (binary, profile id, settings).
 pub async fn prepare(app: &AppHandle) -> Result<(PathBuf, String, Settings)> {
     let state = app.state::<AppState>();
     let settings = crate::settings::current(&state);
@@ -316,13 +332,7 @@ pub async fn prepare(app: &AppHandle) -> Result<(PathBuf, String, Settings)> {
         (p.id.clone(), store.read_content(&p.id)?)
     };
     let bin = resolve_binary(&settings, &state.paths.core_bin_dir)?;
-    let mut settings = settings.resolve_profile(&content)?;
-    let status = state.core.lock().unwrap().status(&settings);
-    if status.running {
-        settings.controller_port = reqwest::Url::parse(&status.controller).ok().and_then(|u| u.port_or_known_default()).unwrap_or(settings.controller_port);
-        settings.secret = status.secret;
-        settings.overrides.extend(["external-controller".into(), "secret".into()]);
-    }
+    let (runtime, settings) = preview_runtime_config(&state, &profile_id, &content)?;
     if settings.tun.enable {
         let perm = crate::privilege::check(&bin);
         if !perm.granted {
@@ -332,10 +342,6 @@ pub async fn prepare(app: &AppHandle) -> Result<(PathBuf, String, Settings)> {
             )));
         }
     }
-    let apps = state.app_rules.lock().unwrap().clone();
-    let groups = state.custom_groups.lock().unwrap().for_profile(Some(&profile_id)).to_vec();
-    let content = crate::routing::apply_profile(&state, Some(&profile_id), &content)?;
-    let runtime = build_runtime_config_with_groups(&content, &settings, &apps.rules, apps.order_override(Some(&profile_id)), &groups)?;
     let core_dir = state.paths.core_dir.clone();
     let candidate = core_dir.join(format!("prepare-{}.yaml", uuid::Uuid::new_v4()));
     write_atomic(&candidate, runtime.as_bytes())?;

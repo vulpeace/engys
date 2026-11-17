@@ -164,6 +164,7 @@ pub fn run() {
             commands::profile_set_update_interval,
             commands::profile_reset_update_interval,
             commands::profile_read,
+            commands::profile_read_final,
             commands::profile_save,
             commands::profile_rename,
             commands::profile_delete,
