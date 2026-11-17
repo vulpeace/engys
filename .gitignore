@@ -1,0 +1,38 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Local credentials and agent state
+/.aws/
+/.codex/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local IDE state (keep shared VS Code recommendations)
+/.idea/
+/.vscode/*
+!/.vscode/extensions.json
+
+# Logs
+*.log
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*

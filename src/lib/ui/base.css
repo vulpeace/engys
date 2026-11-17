@@ -1,0 +1,73 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	height: 100%;
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-family: var(--font-sans);
+	font-size: var(--text-md);
+	line-height: 1.45;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Desktop app: no text selection on chrome, but allow it in content that opts in. */
+body {
+	user-select: none;
+}
+.selectable,
+input,
+textarea,
+pre,
+code {
+	user-select: text;
+}
+
+h1,
+h2,
+h3,
+p {
+	margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: 2px;
+}
+
+.mono {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+.muted {
+	color: var(--color-text-muted);
+}
+.num {
+	font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--color-border);
+	border-radius: var(--radius-full);
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}

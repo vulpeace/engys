@@ -1,0 +1,73 @@
+<script lang="ts">
+	import '#lib/ui/base.css';
+	import { untrack } from 'svelte';
+	import type { LayoutProps } from './$types';
+	import Sidebar from '#lib/components/Sidebar.svelte';
+	import { Toaster, EmptyState } from '#lib/ui/index.ts';
+	import { core } from '#lib/stores/core.svelte.ts';
+	import { live } from '#lib/stores/live.svelte.ts';
+
+	let { children }: LayoutProps = $props();
+
+	let ready = $state(false);
+	let initError = $state<string | null>(null);
+
+	core
+		.init()
+		.then(() => (ready = true))
+		.catch((e) => (initError = String(e)));
+
+	// Theme: 'system' leaves it to prefers-color-scheme (see tokens.css).
+	$effect(() => {
+		const theme = core.settings?.theme ?? 'system';
+		if (theme === 'system') delete document.documentElement.dataset.theme;
+		else document.documentElement.dataset.theme = theme;
+	});
+
+	$effect(() => {
+		live.historyLimit = core.settings?.requestHistoryLimit ?? 2000;
+	});
+
+	// New core process → new session counters.
+	$effect(() => {
+		if (core.status?.startedAt) untrack(() => live.resetSession());
+	});
+
+	// Stream live data whenever a core is reachable.
+	$effect(() => {
+		const api = core.api;
+		untrack(() => (api ? live.connect(api) : live.disconnect()));
+	});
+</script>
+
+<div class="app">
+	<Sidebar />
+	<main>
+		{#if initError}
+			<EmptyState
+				title="Backend unavailable"
+				description="This UI must run inside the Tauri app (pnpm tauri dev). {initError}"
+			/>
+		{:else if ready}
+			{@render children()}
+		{/if}
+	</main>
+</div>
+<Toaster />
+
+<style>
+	.app {
+		display: flex;
+		height: 100vh;
+		overflow: hidden;
+	}
+	main {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-4);
+		padding: var(--space-5);
+		overflow-y: auto;
+	}
+</style>

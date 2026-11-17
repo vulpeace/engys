@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <!-- Referenced by bundle.windows.wix.componentGroupRefs to link this fragment. -->
+    <ComponentGroup Id="MihomoLoginCleanup" />
+    <!-- Tauri's main executable has File Id="Path". -->
+    <CustomAction Id="RemoveMihomoLoginTasks" FileKey="Path" ExeCommand="--remove-login-tasks"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveMihomoLoginTasks" Before="RemoveFiles">Installed AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>
