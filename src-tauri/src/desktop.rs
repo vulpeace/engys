@@ -112,31 +112,21 @@ pub fn window_event(window: &tauri::Window, event: &WindowEvent) {
     let Some(state) = window.app_handle().try_state::<AppState>() else {
         return;
     };
-    let minimize_to_tray = state.settings.lock().unwrap().minimize_to_tray
-        && !state.exiting.load(std::sync::atomic::Ordering::SeqCst)
-        && window.app_handle().tray_by_id("main").is_some();
-    let minimized = window.is_minimized().unwrap_or(false);
-    if minimized || !window.is_visible().unwrap_or(false) {
-        if minimize_to_tray {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-            }
-            if minimized {
-                if let Err(error) = window.hide() {
-                    log::warn!("Could not minimize to tray: {error}");
-                }
-            }
-        }
-        // Keep the last visible geometry instead of saving minimized dimensions.
-        return;
-    }
-    if minimize_to_tray {
-        if let WindowEvent::CloseRequested { api, .. } = event {
+    // Capture visibility before handling close so we only save visible window geometry.
+    let save_geometry = !window.is_minimized().unwrap_or(false) && window.is_visible().unwrap_or(false);
+    if let WindowEvent::CloseRequested { api, .. } = event {
+        let close_to_tray = state.settings.lock().unwrap().minimize_to_tray
+            && !state.exiting.load(std::sync::atomic::Ordering::SeqCst)
+            && window.app_handle().tray_by_id("main").is_some();
+        if close_to_tray {
             api.prevent_close();
             if let Err(error) = window.hide() {
                 log::warn!("Could not close to tray: {error}");
             }
         }
+    }
+    if !save_geometry {
+        return;
     }
     let mut session = state.session.lock().unwrap();
     let maximized = window.is_maximized().unwrap_or(false);

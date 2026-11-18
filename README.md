@@ -214,8 +214,8 @@ missing targets are reported. Windows routing and live reload still need platfor
 
 Enable **Settings → Startup & tray → Start at login**. The change applies immediately, independently of
 Settings Save/Revert. Login launches create the window hidden and expose an **Open** / **Quit** tray
-menu with core status. Launching the app again reveals the existing window. Enable **Minimize to tray**
-under **Settings → Startup & tray** and click Save to hide the window when minimized or closed while
+menu with core status. Launching the app again reveals the existing window. Enable **Close to tray**
+under **Settings → Startup & tray** and click Save to hide the window when closed while
 keeping the core running. This option defaults to off. Choose **Quit** in the tray to exit and stop the
 core. With the option off, closing the window exits the app normally.
 

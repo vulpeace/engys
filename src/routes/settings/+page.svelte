@@ -167,8 +167,8 @@
 	</Field>
 	{#if loginError}<p class="err" role="alert">{loginError}</p>{/if}
 	<p class="muted small">Start at login applies immediately. Use the tray icon or open the app again to show the background window.</p>
-	<Field label="Minimize to tray" description="Hide the window when minimized or closed, keeping the core running. Choose Quit in the tray to exit. Click Save to apply.">
-		<Switch label="Minimize to tray" bind:checked={draft.minimizeToTray} />
+	<Field label="Close to tray" description="Hide the window when closed, keeping the core running. Choose Quit in the tray to exit. Click Save to apply.">
+		<Switch label="Close to tray" bind:checked={draft.minimizeToTray} />
 	</Field>
 </Card>
 
