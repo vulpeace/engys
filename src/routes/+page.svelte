@@ -4,6 +4,7 @@
 	import { ArrowDown, ArrowUp, Cable, Play, Square } from '@lucide/svelte';
 	import { Badge, Button, Card, PageHeader, Select, StatTile, toast } from '#lib/ui/index.ts';
 	import MemoryUsage from '#lib/components/MemoryUsage.svelte';
+	import CoreUpdate from '#lib/components/CoreUpdate.svelte';
 	import BandwidthChart from '#lib/components/BandwidthChart.svelte';
 	import ProfileActions from '#lib/components/ProfileActions.svelte';
 	import TunControl from '#lib/components/TunControl.svelte';
@@ -76,6 +77,8 @@
 		if (logEl) logEl.scrollTop = logEl.scrollHeight;
 	});
 
+	const needsCore = $derived(!core.android && core.binary !== null && core.binary.path === null);
+	const needsProfile = $derived(profiles?.profiles.length === 0);
 	const activeProfile = $derived(
 		profiles?.profiles.find((p) => p.id === (core.status?.profileId ?? profiles?.active))
 	);
@@ -91,16 +94,7 @@
 	}
 </script>
 
-{#if profiles && profiles.profiles.length === 0}
-    <PageHeader title="Dashboard" />
-    <Card title="Add your first profile">
-        <p class="muted">Add a subscription, import a configuration file, or create a profile to get connected.</p>
-        <ProfileActions onadded={refreshProfiles} />
-    </Card>
-{:else if !profiles}
-    <PageHeader title="Dashboard" />
-    <p class="muted">Loading profiles…</p>
-{:else}
+{#if profiles && !needsProfile}
 <PageHeader title="Dashboard" subtitle={activeProfile ? `Profile: ${activeProfile.name}` : 'No profile selected'}>
 	{#snippet actions()}
 		<Select label="Active profile" bind:value={selectedProfile}
@@ -113,12 +107,34 @@
 		{:else}
 			<Badge>Stopped</Badge>
 		{/if}
-		<Button variant={core.running ? 'secondary' : 'primary'} loading={core.busy} disabled={switchingProfile} onclick={() => toggle(!core.running)}>
+		<Button variant={core.running ? 'secondary' : 'primary'} loading={core.busy} disabled={switchingProfile || (needsCore && !core.running)} onclick={() => toggle(!core.running)}>
 			{#if core.running}<Square size={14} /> Stop{:else}<Play size={14} /> Start{/if}
 		</Button>
 	{/snippet}
 </PageHeader>
+{:else}
+	<PageHeader title="Dashboard" />
+{/if}
 
+{#if needsCore || needsProfile}
+	<div class="setup-grid">
+		{#if needsCore}
+			<Card title="Download the mihomo core">
+				<CoreUpdate standalone />
+			</Card>
+		{/if}
+		{#if needsProfile}
+			<Card title="Add your first profile">
+				<p class="muted">Add a subscription, import a configuration file, or create a profile to get connected.</p>
+				<ProfileActions onadded={refreshProfiles} />
+			</Card>
+		{/if}
+	</div>
+{/if}
+
+{#if !profiles}
+	<p class="muted">Loading profiles…</p>
+{:else if !needsProfile}
 {#if core.status?.lastError}
 	<Card>
 		<pre class="error selectable">{core.status.lastError}</pre>
@@ -177,6 +193,11 @@
 {/if}
 
 <style>
+	.setup-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+		gap: var(--space-3);
+	}
 	.tiles {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

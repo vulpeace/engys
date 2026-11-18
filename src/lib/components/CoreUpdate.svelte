@@ -6,6 +6,8 @@
 	import { core } from '#lib/stores/core.svelte.ts';
 	import { bytes } from '#lib/format.ts';
 
+	let { standalone = false }: { standalone?: boolean } = $props();
+
 	let info = $state<UpdateInfo | null>(null);
 	let checking = $state(false);
 	let installing = $state(false);
@@ -51,7 +53,7 @@
 	);
 </script>
 
-<div class="update">
+<div class="update" class:standalone>
 	<div class="row">
 		<div class="text">
 			{#if info}
@@ -94,11 +96,22 @@
 		border-top: 1px solid var(--color-border);
 		font-size: var(--text-sm);
 	}
+	.update.standalone {
+		padding: 0;
+		border-top: 0;
+	}
 	.row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: var(--space-3);
+	}
+	.standalone .row {
+		flex-wrap: wrap;
+	}
+	.standalone .actions {
+		flex-wrap: wrap;
+		flex-shrink: 1;
 	}
 	.actions {
 		display: flex;
