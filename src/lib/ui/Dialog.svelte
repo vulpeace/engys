@@ -55,7 +55,7 @@
 		display: flex;
 		flex-direction: column;
 		width: min(480px, calc(100vw - 2 * var(--space-5)));
-		max-height: calc(100vh - 2 * var(--space-5));
+		max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 2 * var(--space-5));
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
@@ -66,6 +66,7 @@
 		height: calc(100vh - 2 * var(--space-6));
 	}
 	header {
+		flex-shrink: 0;
 		display: flex;
 		justify-content: space-between;
 		align-items: flex-start;
@@ -104,11 +105,16 @@
 		flex-direction: column;
 		gap: var(--space-3);
 	}
+	.body > :global(*) { flex-shrink: 0; }
 	footer {
+		flex-shrink: 0;
 		display: flex;
 		justify-content: flex-end;
 		gap: var(--space-2);
 		padding: var(--space-3) var(--space-4);
 		border-top: 1px solid var(--color-border);
 	}
+    @media (max-width: 700px) {
+        :global(.ui-dialog) { top: calc(50% + (env(safe-area-inset-top) - env(safe-area-inset-bottom)) / 2); }
+    }
 </style>

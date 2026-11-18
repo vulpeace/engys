@@ -36,3 +36,18 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Android / native core build outputs
+/core-mobile/build/
+/src-tauri/plugins/android-vpn/android/build/
+/src-tauri/plugins/android-vpn/android/.gradle/
+
+/src-tauri/plugins/android-vpn/android/.tauri/
+
+# Android signing identities and local credentials
+*.jks
+*.keystore
+/release.properties
+
+# Python build-helper bytecode
+__pycache__/

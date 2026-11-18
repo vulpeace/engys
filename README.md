@@ -210,9 +210,9 @@ check new connections in Rule mode with TUN; change a target and reorder overlap
 entries; reject an invalid regex without changing the last saved/live config; switch profiles and confirm
 missing targets are reported. Windows routing and live reload still need platform testing.
 
-### Start on login
+### Start at login
 
-Enable **Settings → Startup & tray → Start on login**. The change applies immediately, independently of
+Enable **Settings → Startup & tray → Start at login**. The change applies immediately, independently of
 Settings Save/Revert. Login launches create the window hidden and expose an **Open** / **Quit** tray
 menu with core status. Launching the app again reveals the existing window. Enable **Minimize to tray**
 under **Settings → Startup & tray** and click Save to hide the window when minimized or closed while
@@ -338,3 +338,24 @@ Manual checks on Windows and Linux: update a running core with a configuration t
 new version rejects, accept restoration, and verify the previous version starts.
 Repeat choosing Keep update; verify the failed version remains installed and stopped.
 Repeat with the core stopped and an active profile, and with an external core path.
+
+## Android
+
+Android builds share this project and bundle the mihomo core. See [Android build and runtime documentation](docs/android.md) for setup, build commands and device validation.
+
+### Subscription links
+
+Open a link of the form `mihomo-client://import-sub?url=encodedUrl&refresh=int#name`
+to review and download a subscription in Mihomo Client. Use `encodeURIComponent`
+on the full HTTP or HTTPS subscription URL and on the optional profile name.
+
+- `url` is required.
+- `refresh` is optional and sets the update interval in whole minutes. Use `0`
+  to disable automatic refresh. Omit it to use the default interval.
+- `#name` is optional. If omitted, the app uses the server's suggested name or
+  the subscription host.
+
+Example: `mihomo-client://import-sub?url=https%3A%2F%2Fexample.com%2Fconfig.yaml%3Fid%3D42&refresh=60#My%20Profile`
+
+On Linux, launch the AppImage once to register the scheme if your desktop has
+not already registered it.

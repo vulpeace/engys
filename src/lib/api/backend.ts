@@ -41,6 +41,8 @@ export type Settings = {
 };
 
 export type TunSettings = {
+	includePackage: string[];
+	excludePackage: string[];
 	enable: boolean;
 	stack: 'system' | 'gvisor' | 'mixed' | 'mips';
 	autoRoute: boolean;
@@ -56,7 +58,7 @@ export type TunSettings = {
 
 export type TunPermission = {
 	granted: boolean;
-	method: 'root' | 'capabilities' | 'administrator' | 'unsupported';
+	method: 'root' | 'capabilities' | 'administrator' | 'vpn' | 'unsupported';
 	canGrant: boolean;
 	detail: string;
 };
@@ -108,7 +110,7 @@ export type RoutingView = {
     providersYaml: string; inheritedProvidersYaml: string; revision: string;
 };
 
-export type ProcessEntry = { pid: number; name: string; path: string | null };
+export type ProcessEntry = { pid: number; name: string; path: string | null; packageName?: string; system?: boolean; icon?: string | null };
 
 export type UpdateInfo = {
 	currentVersion: string | null;
@@ -121,7 +123,15 @@ export type UpdateInfo = {
 
 export type CoreBinaryInfo = { path: string | null; version: string | null; error: string | null };
 
+export type AndroidMemory = { processRss: number | null; coreHeap: number };
+export type AndroidSetupStatus = { supported: boolean; batteryExempt: boolean; notifications: boolean };
 export const backend = {
+    androidMemory: () => invoke<AndroidMemory>('android_memory'),
+    platformInfo: () => invoke<string>('platform_info'),
+    androidSetupStatus: () => invoke<AndroidSetupStatus>('android_setup_status'),
+    androidRequestBattery: () => invoke<void>('android_request_battery'),
+    androidRequestNotifications: () => invoke<void>('android_request_notifications'),
+    androidVpnActive: () => invoke<boolean>('android_vpn_active'),
     routingGet: () => invoke<RoutingView>('routing_get'),
     routingSave: (profileId: string, revision: string, entries: RoutingEntry[], providersYaml: string, editInherited: boolean) =>
         invoke<RoutingView>('routing_save', { profileId, revision, entries, providersYaml, editInherited }),
@@ -164,6 +174,7 @@ export const backend = {
 
 	appRulesGet: () => invoke<AppRulesView>('app_rules_get'),
 	appRulesSave: (rules: AppRule[], orderOverride: boolean | null) => invoke<AppRulesView>('app_rules_save', { rules, orderOverride }),
+    installedAppIcon: (packageName: string) => invoke<string | null>('installed_app_icon', { packageName }),
 	processesList: () => invoke<ProcessEntry[]>('processes_list'),
 
 	tunPermission: () => invoke<TunPermission>('tun_permission'),

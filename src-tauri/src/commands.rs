@@ -17,6 +17,7 @@ use crate::AppState;
 
 // ----- core -----------------------------------------------------------------
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn core_status(state: State<'_, AppState>) -> CoreStatus {
     let settings = crate::settings::current(&state);
@@ -33,6 +34,7 @@ pub async fn core_stop(app: AppHandle) -> Result<CoreStatus> {
     core::stop(app).await
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn core_logs(state: State<'_, AppState>) -> Vec<String> {
     let core = state.core.lock().unwrap();
@@ -113,8 +115,13 @@ pub fn profile_create_inline(state: State<'_, AppState>, name: String, content: 
 }
 
 #[tauri::command]
-pub fn profile_import_file(state: State<'_, AppState>, path: String, name: Option<String>) -> Result<Profile> {
+pub async fn profile_import_file(state: State<'_, AppState>, path: String, name: Option<String>) -> Result<Profile> {
     let p = PathBuf::from(&path);
+    #[cfg(target_os = "android")]
+    let content = if path.starts_with("content://") {
+        crate::android::invoke::<String>("readDocument", serde_json::json!({"yaml": path})).await?
+    } else { std::fs::read_to_string(&p)? };
+    #[cfg(not(target_os = "android"))]
     let content = std::fs::read_to_string(&p)?;
     subscription::validate_profile_yaml(&content)?;
     let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| name_from_path(&p));
@@ -122,7 +129,7 @@ pub fn profile_import_file(state: State<'_, AppState>, path: String, name: Optio
 }
 
 #[tauri::command]
-pub async fn profile_add_remote(state: State<'_, AppState>, url: String, name: Option<String>, update_interval_minutes: Option<u32>, interval_overridden: Option<bool>) -> Result<Profile> {
+pub async fn profile_add_remote(app: AppHandle, state: State<'_, AppState>, url: String, name: Option<String>, update_interval_minutes: Option<u32>, interval_overridden: Option<bool>) -> Result<Profile> {
     let ua = state.settings.lock().unwrap().subscription_user_agent.clone();
     let d = subscription::download(url.trim(), &ua).await?;
     let name = name
@@ -137,7 +144,9 @@ pub async fn profile_add_remote(state: State<'_, AppState>, url: String, name: O
         p.update_interval_source = crate::profiles::IntervalSource::Client;
     }
     p.last_refreshed_at = Some(now_secs());
-    state.profiles.lock().unwrap().add(p, &d.content)
+    let profile = state.profiles.lock().unwrap().add(p, &d.content)?;
+    crate::subscription_refresh::emit_profiles(&app);
+    Ok(profile)
 }
 
 /// Re-download a subscription; hot-reloads the core if this is the active profile.
@@ -252,6 +261,7 @@ pub async fn core_reload(app: AppHandle) -> Result<()> {
 
 // ----- processes and app routing ----------------------------------------
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn processes_list() -> Result<Vec<ProcessEntry>> {
     tauri::async_runtime::spawn_blocking(processes::list)
@@ -261,6 +271,7 @@ pub async fn processes_list() -> Result<Vec<ProcessEntry>> {
 
 // ----- TUN ----------------------------------------------------------------------
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn tun_permission(state: State<'_, AppState>) -> Result<crate::privilege::TunPermission> {
     let settings = crate::settings::current(&state);
@@ -270,6 +281,7 @@ pub fn tun_permission(state: State<'_, AppState>) -> Result<crate::privilege::Tu
 
 /// Linux: polkit prompt to set capabilities on the core binary.
 /// Windows: stop the core, relaunch the app elevated, exit this instance.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn tun_grant_permission(app: AppHandle, state: State<'_, AppState>) -> Result<crate::privilege::TunPermission> {
     let settings = crate::settings::current(&state);
@@ -368,4 +380,65 @@ pub fn routing_get(app: AppHandle) -> Result<crate::routing::View> { crate::rout
 #[tauri::command]
 pub async fn routing_save(app: AppHandle, profile_id: String, revision: String, entries: Vec<crate::routing::Entry>, providers_yaml: String, edit_inherited: bool) -> Result<crate::routing::View> {
     crate::routing::save(app, profile_id, revision, entries, providers_yaml, edit_inherited).await
+}
+
+#[tauri::command]
+pub fn platform_info() -> &'static str { std::env::consts::OS }
+
+#[tauri::command]
+pub async fn android_setup_status() -> Result<serde_json::Value> {
+    #[cfg(target_os = "android")]
+    return crate::android::invoke("setupStatus", serde_json::json!({})).await;
+    #[cfg(not(target_os = "android"))]
+    Ok(serde_json::json!({"supported": false}))
+}
+#[tauri::command]
+pub async fn android_request_battery() -> Result<()> {
+    #[cfg(target_os = "android")]
+    crate::android::invoke::<serde_json::Value>("requestBattery", serde_json::json!({})).await?;
+    Ok(())
+}
+#[tauri::command]
+pub async fn android_request_notifications() -> Result<()> {
+    #[cfg(target_os = "android")]
+    crate::android::invoke::<serde_json::Value>("requestNotifications", serde_json::json!({})).await?;
+    Ok(())
+}
+#[tauri::command]
+pub async fn android_vpn_active() -> Result<bool> {
+    #[cfg(target_os = "android")]
+    return crate::android::invoke("vpnActive", serde_json::json!({})).await;
+    #[cfg(not(target_os = "android"))]
+    Ok(false)
+}
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn core_status(app: AppHandle) -> Result<CoreStatus> { core::refresh(&app).await }
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn core_logs() -> Result<Vec<String>> { crate::android::invoke("logs", serde_json::json!({})).await }
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn processes_list() -> Result<Vec<ProcessEntry>> { crate::android::invoke("installedApps", serde_json::json!({})).await }
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn tun_permission() -> Result<serde_json::Value> { crate::android::invoke("vpnPermission", serde_json::json!({})).await }
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn tun_grant_permission() -> Result<serde_json::Value> { crate::android::invoke("requestVpn", serde_json::json!({})).await }
+
+#[tauri::command]
+pub async fn installed_app_icon(package_name: String) -> Result<Option<String>> {
+    #[cfg(target_os = "android")]
+    return crate::android::invoke("installedAppIcon", serde_json::json!({"packageName": package_name})).await;
+    #[cfg(not(target_os = "android"))]
+    { let _ = package_name; Ok(None) }
+}
+
+#[tauri::command]
+pub async fn android_memory() -> Result<serde_json::Value> {
+    #[cfg(target_os = "android")]
+    return crate::android::invoke("memory", serde_json::json!({})).await;
+    #[cfg(not(target_os = "android"))]
+    Ok(serde_json::Value::Null)
 }

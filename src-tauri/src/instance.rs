@@ -1,10 +1,11 @@
 //! Per-config-directory process lock, plus an authenticated loopback message that
-//! can only reveal the UI. Works across Windows integrity levels without UIPI.
+//! reveals the UI or forwards a subscription link for confirmation.
 use crate::error::{Error, Result};
+use crate::subscription_links::{self, MAX_LINK_BYTES};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -38,7 +39,12 @@ fn lock_file(path: &Path) -> Result<Option<File>> {
 
 impl Instance {
     /// None means an existing process accepted this launch.
-    pub fn acquire(dir: &Path, background: bool, handoff: bool) -> Result<Option<Self>> {
+    pub fn acquire(
+        dir: &Path,
+        background: bool,
+        handoff: bool,
+        link: Option<&str>,
+    ) -> Result<Option<Self>> {
         std::fs::create_dir_all(dir)?;
         let path = dir.join("instance.lock");
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -52,7 +58,10 @@ impl Instance {
                         token: token.clone(),
                     };
                     // Windows byte-range locks prevent reading discovery data in the lock file.
-                    crate::util::write_atomic(&dir.join("instance.json"), &serde_json::to_vec(&address)?)?;
+                    crate::util::write_atomic(
+                        &dir.join("instance.json"),
+                        &serde_json::to_vec(&address)?,
+                    )?;
                     return Ok(Some(Self {
                         _lock: file,
                         listener,
@@ -71,11 +80,24 @@ impl Instance {
                                 Duration::from_millis(500),
                             ) {
                                 stream.set_write_timeout(Some(Duration::from_secs(1)))?;
-                                stream.write_all(
-                                    format!("{}:{}", address.token, if background { "background" } else { "open" })
-                                        .as_bytes(),
-                                )?;
-                                return Ok(None);
+                                let request = match link {
+                                    Some(link) => format!("import:{link}"),
+                                    None if background => "background".into(),
+                                    None => "open".into(),
+                                };
+                                if write!(stream, "{}:{request}", address.token).is_ok() {
+                                    if link.is_none() {
+                                        return Ok(None);
+                                    }
+                                    // The startup lock can change owners during Windows elevation.
+                                    // Wait for the running app to acknowledge receipt before exiting.
+                                    stream.shutdown(Shutdown::Write)?;
+                                    stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+                                    let mut ack = [0];
+                                    if stream.read_exact(&mut ack).is_ok() && ack == [1] {
+                                        return Ok(None);
+                                    }
+                                }
                             }
                         }
                     }
@@ -92,17 +114,36 @@ impl Instance {
 
     pub fn listen(&self, app: tauri::AppHandle) -> Result<()> {
         let listener = self.listener.try_clone()?;
-        let expected = format!("{}:open", self.token);
+        let expected = format!("{}:", self.token);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
-                let Ok(stream) = stream else { break };
+                let Ok(mut stream) = stream else { break };
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
                 let mut bytes = Vec::new();
-                // Fixed-size message: do not allow arbitrary commands or unbounded input.
-                if stream.take(128).read_to_end(&mut bytes).is_ok() {
-                    if bytes == expected.as_bytes() {
-                        crate::desktop::show(&app);
+                if (&mut stream)
+                    .take((MAX_LINK_BYTES + 128) as u64)
+                    .read_to_end(&mut bytes)
+                    .is_err()
+                {
+                    continue;
+                }
+                let Ok(message) = std::str::from_utf8(&bytes) else {
+                    continue;
+                };
+                match message.strip_prefix(&expected) {
+                    Some("open") => crate::desktop::show(&app),
+                    Some(request) => {
+                        if let Some(link) = request
+                            .strip_prefix("import:")
+                            .filter(|link| subscription_links::is_link(link))
+                        {
+                            subscription_links::enqueue(&app, link.to_owned());
+                            let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+                            let _ = stream.write_all(&[1]);
+                            crate::desktop::show(&app);
+                        }
                     }
+                    None => {}
                 }
             }
         });

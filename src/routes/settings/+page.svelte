@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { comparableSettings, PROFILE_FIELD_LABELS, overrideKeys, resetField, syncInherited, type ProfileField } from '#lib/settings-overrides.ts';
-	import { FolderOpen, RefreshCw, Save, Undo2 } from '@lucide/svelte';
+	import { AppWindow, ListFilter, ListTree, FolderOpen, RefreshCw, Save, Undo2 } from '@lucide/svelte';
 	import { open as openFile } from '@tauri-apps/plugin-dialog';
 	import { Button, Card, Field, PageHeader, Segmented, Select, Switch, TextField, toast } from '#lib/ui/index.ts';
 	import { backend, type Settings, type LoginStatus } from '#lib/api/backend.ts';
+	import AndroidSetup from '#lib/components/AndroidSetup.svelte';
 	import CoreUpdate from '#lib/components/CoreUpdate.svelte';
 	import { core } from '#lib/stores/core.svelte.ts';
 
@@ -30,7 +32,7 @@
 			loginBusy = false;
 		}
 	}
-	void refreshLogin();
+	if (!core.android) void refreshLogin();
 
 	async function setLogin(enabled: boolean) {
 		loginBusy = true;
@@ -38,7 +40,7 @@
 			login = await backend.loginSet(enabled);
 			loginChecked = login.enabled;
 			loginError = '';
-			toast.success(enabled ? 'Start on login enabled' : 'Start on login disabled');
+			toast.success(enabled ? 'Start at login enabled' : 'Start at login disabled');
 		} catch (e) {
 			toast.error(e);
 			await refreshLogin();
@@ -139,21 +141,38 @@
 	{/snippet}
 </PageHeader>
 
+{#if core.android}
+<Card title="Tools">
+    <div class="android-tools">
+        <Button onclick={() => goto('/apps')}><AppWindow size={16} /> Proxied apps</Button>
+        <Button onclick={() => goto('/rules')}><ListFilter size={16} /> Rules</Button>
+        <Button onclick={() => goto('/requests')}><ListTree size={16} /> Requests</Button>
+    </div>
+</Card>
+{/if}
+
 <p class="muted note">Profile-backed fields follow the active subscription or config until you edit them. The reset button returns control to the profile; click Save to apply.</p>
 
+{#if core.android}<AndroidSetup bind:settings={draft} />{:else}
 <Card title="Startup & tray">
-	<Field label="Start on login" description={login?.detail ?? 'Launch in the background and restore the previous core state.'}>
-		<Switch label="Start on login" bind:checked={loginChecked}
-			disabled={loginBusy || !login?.supported} onCheckedChange={setLogin} />
+	<Field label="Start at login" description={login?.detail ?? 'Launch in the background and restore the previous core state.'}>
+		{#if login}
+			<Switch label="Start at login" bind:checked={loginChecked}
+				disabled={loginBusy || !login.supported} onCheckedChange={setLogin} />
+		{:else if loginBusy}
+			<span class="muted small" role="status">Checking…</span>
+		{/if}
 		<Button icon title="Refresh login status" disabled={loginBusy} onclick={refreshLogin}><RefreshCw size={14} /></Button>
 		{#if login?.needsRepair}<Button disabled={loginBusy} onclick={() => setLogin(true)}>Repair</Button>{/if}
 	</Field>
 	{#if loginError}<p class="err" role="alert">{loginError}</p>{/if}
-	<p class="muted small">Start on login applies immediately. Use the tray icon or open the app again to show the background window.</p>
+	<p class="muted small">Start at login applies immediately. Use the tray icon or open the app again to show the background window.</p>
 	<Field label="Minimize to tray" description="Hide the window when minimized or closed, keeping the core running. Choose Quit in the tray to exit. Click Save to apply.">
 		<Switch label="Minimize to tray" bind:checked={draft.minimizeToTray} />
 	</Field>
 </Card>
+
+{/if}
 
 <Card title="Appearance">
 	<Field label="Theme">
@@ -171,17 +190,18 @@
 </Card>
 
 <Card title="Core">
-	<Field label="mihomo binary" description="Leave empty to use the app-managed core (download below), else a bundled one, else `mihomo` from PATH." stacked id="core-path">
+	{#if !core.android}<Field label="mihomo binary" description="Leave empty to use the app-managed core (download below), else a bundled one, else `mihomo` from PATH." stacked id="core-path">
 		<TextField id="core-path" placeholder="Auto-detect" bind:value={draft.corePath} />
 		<Button icon title="Browse" onclick={browseCore}><FolderOpen size={14} /></Button>
 		<Button icon title="Detect" onclick={detect}><RefreshCw size={14} /></Button>
 	</Field>
+	{/if}
 	<div class="detected muted mono selectable">
 		{#if !binary}Detecting…
 		{:else if binary.error}<span class="err">{binary.error}</span>
 		{:else}{binary.version}<br />{binary.path}{/if}
 	</div>
-	<CoreUpdate />
+	{#if core.android}<p class="muted note">The Android core is bundled. Update the application to update mihomo.</p>{:else}<CoreUpdate />{/if}
 	<Field label="Working directory" description="Runtime config, GEO databases and cache live here.">
 		<span class="mono muted small selectable">{workDir}</span>
 	</Field>
@@ -248,7 +268,7 @@
 		/>
 			{@render resetControl('tun.stack')}
 	</Field>
-	<Field label="Auto route" description="Install routes so all traffic enters the TUN interface.">
+	{#if !core.android}<Field label="Auto route" description="Install routes so all traffic enters the TUN interface.">
 		<Switch label="Auto route" bind:checked={draft.tun.autoRoute} onCheckedChange={() => mark('tun.auto-route')} />
 			{@render resetControl('tun.auto-route')}
 	</Field>
@@ -284,6 +304,7 @@
 		<TextField id="tun-device" class="narrow" placeholder="Meta" bind:value={draft.tun.device} oninput={() => mark('tun.device')} />
 			{@render resetControl('tun.device')}
 	</Field>
+	{/if}
 	<Field label="MTU" description="Empty = core default." id="tun-mtu">
 		<TextField id="tun-mtu" type="number" class="narrow" placeholder="default" value={draft.tun.mtu ?? ''} oninput={(e) => { draft.tun.mtu = e.currentTarget.value ? Math.max(576, Number(e.currentTarget.value)) : null; mark('tun.mtu'); }} />
 			{@render resetControl('tun.mtu')}
@@ -300,10 +321,11 @@
 </Card>
 
 <Card title="Controller API">
-	<Field label="Port" description="Uses the profile controller port unless overridden. The API stays on 127.0.0.1." id="ctl-port">
+	<Field label="Port" description={core.android ? "Preferred controller port. If occupied, Android tries the next available port. The API stays on 127.0.0.1." : "Uses the profile controller port unless overridden. The API stays on 127.0.0.1."} id="ctl-port">
 		<TextField id="ctl-port" type="number" class="narrow" value={draft.controllerPort} oninput={(e) => { draft.controllerPort = port(e.currentTarget.value); mark('external-controller'); }} />
 			{@render resetControl('external-controller')}
 	</Field>
+	{#if core.android && core.running}<p class="muted small">Active controller: <span class="mono">{core.status?.controller}</span></p>{/if}
 	<Field label="Secret" description="Uses the profile secret unless overridden, with a generated local secret as the fallback." id="secret">
 		<TextField id="secret" class="mono" bind:value={draft.secret} oninput={() => mark('secret')} />
 		<Button onclick={() => { draft.secret = crypto.randomUUID().replaceAll('-', ''); mark('secret'); }}>Regenerate</Button>
@@ -350,4 +372,5 @@
 	:global(.narrow) {
 		width: 110px !important;
 	}
+    .android-tools { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 </style>

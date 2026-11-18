@@ -5,6 +5,7 @@
 	import { Badge, Button, Card, PageHeader, Select, StatTile, toast } from '#lib/ui/index.ts';
 	import MemoryUsage from '#lib/components/MemoryUsage.svelte';
 	import BandwidthChart from '#lib/components/BandwidthChart.svelte';
+	import ProfileActions from '#lib/components/ProfileActions.svelte';
 	import TunControl from '#lib/components/TunControl.svelte';
 	import { core } from '#lib/stores/core.svelte.ts';
 	import { live } from '#lib/stores/live.svelte.ts';
@@ -90,6 +91,16 @@
 	}
 </script>
 
+{#if profiles && profiles.profiles.length === 0}
+    <PageHeader title="Dashboard" />
+    <Card title="Add your first profile">
+        <p class="muted">Add a subscription, import a configuration file, or create a profile to get connected.</p>
+        <ProfileActions onadded={refreshProfiles} />
+    </Card>
+{:else if !profiles}
+    <PageHeader title="Dashboard" />
+    <p class="muted">Loading profiles…</p>
+{:else}
 <PageHeader title="Dashboard" subtitle={activeProfile ? `Profile: ${activeProfile.name}` : 'No profile selected'}>
 	{#snippet actions()}
 		<Select label="Active profile" bind:value={selectedProfile}
@@ -163,6 +174,8 @@
 	<pre class="log selectable" bind:this={logEl}>{core.logs.join('\n') || 'No output yet.'}</pre>
 </Card>
 
+{/if}
+
 <style>
 	.tiles {
 		display: grid;
@@ -230,4 +243,8 @@
 		font-size: var(--text-xs);
 		white-space: pre-wrap;
 	}
+    @media (max-width: 700px) {
+        .grid { grid-template-columns: minmax(0, 1fr); }
+        .legend { flex-wrap: wrap; }
+    }
 </style>

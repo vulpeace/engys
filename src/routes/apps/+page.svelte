@@ -1,4 +1,6 @@
 <script lang="ts">
+    import InstalledAppIcon from '#lib/components/InstalledAppIcon.svelte';
+    import { installedApps } from '#lib/stores/installed-apps.ts';
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { AppWindow, FolderOpen, ListPlus, Trash2, Info, Plus, Save, Undo2, Pencil, ArrowUp, ArrowDown } from '@lucide/svelte';
@@ -7,12 +9,12 @@
 	import { backend, type AppRule, type AppMatchKind, type ProcessEntry } from '#lib/api/backend.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
 
-	const MATCHES: { value: AppMatchKind; label: string }[] = [
+	const MATCHES: { value: AppMatchKind; label: string }[] = $derived(core.android ? [{ value: 'processName', label: 'Package name' }, { value: 'processNameRegex', label: 'Package regex' }] : [
 		{ value: 'processName', label: 'Process name' },
 		{ value: 'processPath', label: 'Executable path' },
 		{ value: 'processNameRegex', label: 'Name regex' },
 		{ value: 'processPathRegex', label: 'Path regex' }
-	];
+	]);
 	const RULE_TYPES: Record<AppMatchKind, string> = {
 		processName: 'PROCESS-NAME', processPath: 'PROCESS-PATH',
 		processNameRegex: 'PROCESS-NAME-REGEX', processPathRegex: 'PROCESS-PATH-REGEX'
@@ -46,6 +48,9 @@
 	let loadingProcs = $state(false);
 	let processError = $state('');
 	let query = $state('');
+	let showSystem = $state(false);
+	const pickerKind = (p: ProcessEntry): AppMatchKind => p.packageName ? 'processName' : p.path ? 'processPath' : 'processName';
+	const pickerValue = (p: ProcessEntry) => p.packageName ?? p.path ?? p.name;
 	let manualOpen = $state(false);
 	let editingId = $state<string | null>(null);
 	let matchKind = $state<AppMatchKind>('processName');
@@ -55,7 +60,7 @@
 	const regex = $derived(matchKind.endsWith('Regex'));
 	const filtered = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		return q ? processes.filter((p) => p.name.toLowerCase().includes(q) || p.path?.toLowerCase().includes(q)) : processes;
+		return processes.filter((p) => (!core.android || showSystem || !p.system) && (!q || p.name.toLowerCase().includes(q) || (p.packageName ?? p.path)?.toLowerCase().includes(q)));
 	});
 	const ruleFor = (a: AppRule) => `${RULE_TYPES[a.kind]},${a.value},${a.target}`;
 	const titleFor = (a: AppRule) => a.kind === 'processPath' ? a.value.split(/[\\/]/).pop() ?? a.value : a.value;
@@ -180,7 +185,7 @@
 		pickerOpen = true;
 		loadingProcs = true;
 		processError = '';
-		try { processes = await backend.processesList(); }
+		try { processes = core.android ? await installedApps() : await backend.processesList(); }
 		catch (e) { processError = String(e); }
 		finally { loadingProcs = false; }
 	}
@@ -230,12 +235,12 @@
 
 <Card title="Applications" padded={false}>
 	<div class="toolbar add-tools">
-		<Button disabled={!loaded || loading || saving} onclick={openPicker}><ListPlus size={14} /> From running apps</Button>
-		<Button disabled={!loaded || loading || saving} onclick={browse}><FolderOpen size={14} /> Browse executable</Button>
+		<Button disabled={!loaded || loading || saving} onclick={openPicker}><ListPlus size={14} /> {core.android ? 'Installed apps' : 'From running apps'}</Button>
+		{#if !core.android}<Button disabled={!loaded || loading || saving} onclick={browse}><FolderOpen size={14} /> Browse executable</Button>{/if}
 		<Button disabled={!loaded || loading || saving} onclick={() => edit()}><Plus size={14} /> Add manually</Button>
 	</div>
 	{#if loading}<p class="muted loading">Loading application rules…</p>
-	{:else if !apps.length}<EmptyState title="No applications" description="Pick a running application, browse to an executable, or add a name or regex manually." />
+	{:else if !apps.length}<EmptyState title="No applications" description={core.android ? "Choose an installed application or add a package name manually." : "Pick a running application, browse to an executable, or add a name or regex manually."} />
 	{:else}
 		<ul class="apps">
 			{#each apps as app, i (app.id)}
@@ -257,10 +262,10 @@
 
 {#if apps.length}<Card title="Generated rules"><pre class="rules selectable">{apps.map((a) => `- ${JSON.stringify(ruleFor(a))}`).join('\n')}</pre></Card>{/if}
 
-<Dialog bind:open={manualOpen} title={editingId ? 'Edit application rule' : 'Add application rule'} description="Match an executable by its name, full path, or a regular expression.">
+<Dialog bind:open={manualOpen} title={editingId ? 'Edit application rule' : 'Add application rule'} description={core.android ? "Match an Android package name or package-name regex." : "Match an executable by its name, full path, or a regular expression."}>
 	<Field label="Match" stacked><Select options={MATCHES} bind:value={matchKind} label="Match type" /></Field>
-	<Field label={regex ? 'Regular expression' : matchKind === 'processPath' ? 'Executable path' : 'Process name'} stacked id="app-match">
-		<TextField id="app-match" bind:value={matchValue} placeholder={regex ? '^(firefox|chrome)(\\.exe)?$' : matchKind === 'processPath' ? '/usr/bin/firefox' : 'firefox.exe'} onkeydown={(e) => { if (e.key === 'Enter') submitManual(); }} />
+	<Field label={regex ? 'Regular expression' : matchKind === 'processPath' ? 'Executable path' : core.android ? 'Package name' : 'Process name'} stacked id="app-match">
+		<TextField id="app-match" bind:value={matchValue} placeholder={regex ? '^(firefox|chrome)(\\.exe)?$' : matchKind === 'processPath' ? '/usr/bin/firefox' : core.android ? 'org.mozilla.firefox' : 'firefox.exe'} onkeydown={(e) => { if (e.key === 'Enter') submitManual(); }} />
 	</Field>
 	{#if regex}<p class="muted note">Regexes match names or paths case-insensitively. Use ^ and $ for a whole match. The installed mihomo core validates syntax when you save.</p>{/if}
 	<Field label="Route to" stacked><Select options={targetOptions} bind:value={matchTarget} label="Routing target" /></Field>
@@ -268,17 +273,18 @@
 	{#snippet footer()}<Button onclick={() => manualOpen = false}>Cancel</Button><Button variant="primary" onclick={submitManual}>{editingId ? 'Update rule' : 'Add rule'}</Button>{/snippet}
 </Dialog>
 
-<Dialog bind:open={pickerOpen} title="Running applications" description="One entry per executable. Applications without a visible path are matched by name.">
-	<TextField placeholder="Search by name or path…" aria-label="Search running applications" bind:value={query} />
-	{#if loadingProcs}<p class="muted">Loading processes…</p>
+<Dialog bind:open={pickerOpen} title={core.android ? "Installed applications" : "Running applications"} description={core.android ? "Choose an installed application by package name." : "One entry per executable. Applications without a visible path are matched by name."}>
+	{#if core.android}<Field label="Show system apps"><Switch label="Show system apps" bind:checked={showSystem} /></Field>{/if}
+	<TextField placeholder={core.android ? "Search by name or package…" : "Search by name or path…"} aria-label="Search running applications" bind:value={query} />
+	{#if loadingProcs}<p class="muted">Loading applications…</p>
 	{:else if processError}<p class="error" role="alert">{processError}</p><Button onclick={openPicker}>Retry</Button>
 	{:else if !filtered.length}<p class="muted">No matching applications.</p>
 	{:else}
 		<ul class="procs">
-			{#each filtered as p (p.path ?? `${p.name}:${p.pid}`)}
-				<li><div class="app-info"><strong>{p.name}</strong><span class="muted mono path" title={p.path ?? ''}>{p.path ?? `pid ${p.pid} — matched by name`}</span></div>
-					{#if apps.some((a) => sameMatch(a, p.path ? 'processPath' : 'processName', p.path ?? p.name))}<Badge tone="success">Added</Badge>
-					{:else}<Button size="sm" disabled={saving} onclick={() => add(p.path ? 'processPath' : 'processName', p.path ?? p.name)}>Add</Button>{/if}
+			{#each filtered as p (p.packageName ?? p.path ?? `${p.name}:${p.pid}`)}
+				<li>{#if p.packageName}<InstalledAppIcon packageName={p.packageName} />{/if}<div class="app-info"><strong>{p.name}</strong><span class="muted mono path" title={p.path ?? ''}>{p.packageName ?? p.path ?? `pid ${p.pid} — matched by name`}</span></div>
+					{#if apps.some((a) => sameMatch(a, pickerKind(p), pickerValue(p)))}<Badge tone="success">Added</Badge>
+					{:else}<Button size="sm" disabled={saving} onclick={() => add(pickerKind(p), pickerValue(p))}>Add</Button>{/if}
 				</li>
 			{/each}
 		</ul>

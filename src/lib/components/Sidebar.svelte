@@ -13,14 +13,15 @@
 		{ href: '/settings', label: 'Settings', icon: Settings }
 	];
 
+    const visibleItems = $derived(core.android ? items.filter((item) => ['/', '/proxies', '/profiles', '/settings'].includes(item.href)) : items);
 	const isActive = (href: string) =>
-		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href) || (core.android && href === '/settings' && ['/apps', '/rules', '/requests'].some((route) => page.url.pathname.startsWith(route)));
 </script>
 
-<nav>
+<nav class:android={core.android}>
 	<div class="brand">Mihomo</div>
 	<ul>
-		{#each items as item (item.href)}
+		{#each visibleItems as item (item.href)}
 			<li>
 				<a href={item.href} class:active={isActive(item.href)} aria-current={isActive(item.href) ? 'page' : undefined}>
 					<item.icon size={16} />
@@ -94,4 +95,14 @@
 	.on .dot {
 		background: var(--color-success);
 	}
+    @media (max-width: 700px) {
+        nav { width: 100%; padding: 8px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+        .brand, .status { display: none; }
+        ul { flex-direction: row; overflow-x: auto; }
+        a { white-space: nowrap; padding: 10px; gap: 6px; }
+    }
+    nav.android { width: 100%; padding: 8px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+    nav.android .brand, nav.android .status { display: none; }
+    nav.android ul { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    nav.android a { flex-direction: column; gap: 4px; padding: 8px 2px; font-size: var(--text-xs); white-space: normal; }
 </style>

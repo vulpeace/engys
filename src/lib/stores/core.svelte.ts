@@ -16,6 +16,8 @@ const LOG_CAP = 1000;
  * this mirrors it and listens for `core-status` / `core-log` events.
  */
 class CoreStore {
+	platform = $state('');
+	android = $derived(this.platform === 'android');
 	status = $state<CoreStatus | null>(null);
 	settings = $state<Settings | null>(null);
 	logs = $state<string[]>([]);
@@ -43,6 +45,7 @@ class CoreStore {
 	async init() {
 		if (this.#initialized) return;
 		this.#initialized = true;
+		this.platform = await backend.platformInfo();
 		await listen<CoreStatus>('core-status', (e) => {
 			this.status = e.payload;
 			void this.refreshSettings();
@@ -60,12 +63,25 @@ class CoreStore {
 			backend.coreLogs()
 		]);
 		await Promise.all([this.refreshTunPermission(), this.refreshTunActive(), this.refreshBinary()]);
+        if (this.android) {
+            const refresh = async () => {
+                if (document.visibilityState !== 'visible') return;
+                try {
+                    this.status = await backend.coreStatus();
+                    await this.refreshTunActive();
+                    this.logs = await backend.coreLogs();
+                } catch { /* The next poll retries after activity resume. */ }
+            };
+            document.addEventListener('visibilitychange', () => { void refresh(); });
+            setInterval(() => { void refresh(); }, 2000);
+        }
 	}
 
 	async start() {
 		this.busy = true;
 		try {
 			this.logs = [];
+            if (this.android && this.settings?.tun.enable) await this.ensureVpnPermission();
 			this.status = await backend.coreStart();
 		} finally {
 			this.busy = false;
@@ -86,6 +102,12 @@ class CoreStore {
 			this.busy = false;
 		}
 	}
+
+    async ensureVpnPermission() {
+        await this.refreshTunPermission();
+        if (!this.tunPermission?.granted) this.tunPermission = await backend.tunGrantPermission();
+        if (!this.tunPermission?.granted) throw new Error('VPN permission was not granted.');
+    }
 
 	/** Persist a settings change. */
 	async saveSettings(patch: Partial<Settings>) {
@@ -122,6 +144,7 @@ class CoreStore {
 			return;
 		}
 		try {
+            if (this.android) { this.tunActive = await backend.androidVpnActive(); return; }
 			const cfg = await api.configs();
 			this.tunActive = !!(cfg.tun as { enable?: boolean } | undefined)?.enable;
 		} catch {
@@ -150,6 +173,7 @@ class CoreStore {
 		this.tunBusy = true;
 		try {
 			if (enable) {
+                if (this.android) await this.ensureVpnPermission();
 				await this.refreshTunPermission();
 				if (!this.tunPermission?.granted) {
 					throw new Error(this.tunPermission?.detail ?? 'TUN mode needs permission first.');
@@ -189,6 +213,13 @@ class CoreStore {
 
 	/** Change the proxy mode live (if running) and persist it for the next start. */
 	async setMode(mode: Settings['mode'], inherit = false) {
+        if (this.android && this.settings) {
+            const previous = structuredClone($state.snapshot(this.settings));
+            await this.saveSettings({ mode, overrides: overrideKeys(this.settings, 'mode', !inherit) });
+            try { if (this.running) await backend.coreReload(); }
+            catch (e) { await this.saveSettings(previous); throw e; }
+            return;
+        }
 		await this.api?.patchConfigs({ mode });
 		if (this.settings) await this.saveSettings({ mode, overrides: overrideKeys(this.settings, 'mode', !inherit) });
 	}

@@ -1,43 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
-	import { FilePlus, FolderOpen, Link, Pencil, RefreshCw, Trash2, Check, Undo2, Eye } from '@lucide/svelte';
-	import { ask, open as openFile } from '@tauri-apps/plugin-dialog';
+	import {  Pencil, RefreshCw, Trash2, Check, Undo2, Eye } from '@lucide/svelte';
+	import { ask } from '@tauri-apps/plugin-dialog';
 	import { Badge, Button, Card, Dialog, EmptyState, Meter, PageHeader, TextField, toast } from '#lib/ui/index.ts';
+	import ProfileActions from '#lib/components/ProfileActions.svelte';
 	import YamlEditor from '#lib/components/YamlEditor.svelte';
 	import { backend, type Profile, type ProfileIndex } from '#lib/api/backend.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
+	import { validProfileInterval as validInterval } from '#lib/profile-interval.ts';
 	import { bytes, dateTime, timeAgo } from '#lib/format.ts';
 
-	const TEMPLATE = `# Minimal mihomo profile — see Meta-Docs/docs/config for every option.
-proxies:
-  - name: example-ss
-    type: ss
-    server: example.com
-    port: 8388
-    cipher: aes-128-gcm
-    password: change-me
-
-proxy-groups:
-  - name: Proxy
-    type: select
-    proxies: [example-ss, DIRECT]
-
-rules:
-  - MATCH,Proxy
-`;
 
 	let index = $state<ProfileIndex>({ active: null, profiles: [] });
 	let busy = $state<Record<string, boolean>>({});
 
 	// Dialog state
-	let subOpen = $state(false);
-	let subUrl = $state('');
-	let subName = $state('');
-	let subInterval = $state('0');
-	let subIntervalTouched = $state(false);
 	let intervalDrafts = $state<Record<string, string>>({});
-	const validInterval = (input: string | number) => String(input ?? '').trim() !== '' && Number.isInteger(Number(input)) && Number(input) >= 0 && Number(input) <= 4294967295;
 	let previewOpen = $state(false);
 	let preview = $state({ name: '', content: '' });
 	let editorOpen = $state(false);
@@ -66,30 +45,6 @@ rules:
 		} finally {
 			busy[key] = false;
 		}
-	}
-
-	async function importFile() {
-		const path = await openFile({
-			multiple: false,
-			directory: false,
-			filters: [{ name: 'YAML profile', extensions: ['yaml', 'yml'] }, { name: 'All files', extensions: ['*'] }]
-		});
-		if (typeof path === 'string') await run('import', () => backend.profileImportFile(path), 'Profile imported');
-	}
-
-	async function addSubscription() {
-		const ok = await run('sub', () => backend.profileAddRemote(subUrl, subName || undefined, Number(subInterval), subIntervalTouched), 'Subscription added');
-		if (ok) {
-			subOpen = false;
-			subUrl = subName = '';
-			subInterval = '0';
-			subIntervalTouched = false;
-		}
-	}
-
-	function newInline() {
-		editing = { id: null, name: 'New profile', content: TEMPLATE };
-		editorOpen = true;
 	}
 
 	async function edit(p: Profile) {
@@ -154,9 +109,7 @@ rules:
 
 <PageHeader title="Profiles" subtitle="Configs the core can run. The active one is used on start.">
 	{#snippet actions()}
-		<Button onclick={newInline}><FilePlus size={14} /> New inline</Button>
-		<Button loading={busy.import} onclick={importFile}><FolderOpen size={14} /> Import file</Button>
-		<Button variant="primary" onclick={() => (subOpen = true)}><Link size={14} /> Add subscription</Button>
+		<ProfileActions onadded={refresh} />
 	{/snippet}
 </PageHeader>
 
@@ -173,7 +126,7 @@ rules:
 			{@const active = index.active === p.id}
 			{@const sub = p.subscription}
 			<Card>
-				<div class="profile" class:active>
+				<div class="profile" class:active class:android={core.android}>
 					<div class="info">
 						<div class="title">
 							<strong>{p.name}</strong>
@@ -231,22 +184,6 @@ rules:
 	</div>
 {/if}
 
-<Dialog bind:open={subOpen} title="Add subscription" description="The link must return a Clash/mihomo YAML config.">
-	<label class="label" for="sub-url">Subscription URL</label>
-	<TextField id="sub-url" placeholder="https://…" bind:value={subUrl} />
-	<label class="label" for="sub-name">Name (optional)</label>
-	<TextField id="sub-name" placeholder="Taken from the server if empty" bind:value={subName} />
-	<label class="label" for="sub-interval">Update interval (minutes)</label>
-	<TextField id="sub-interval" type="number" min="0" max="4294967295" step="1" bind:value={subInterval} oninput={() => subIntervalTouched = true} />
-	<p class="muted small">0 disables automatic refresh. Refresh runs while the app is open, including in the tray.</p>
-	{#snippet footer()}
-		<Button onclick={() => (subOpen = false)}>Cancel</Button>
-		<Button variant="primary" loading={busy.sub} disabled={!/^https?:\/\//.test(subUrl.trim()) || !validInterval(String(subInterval))} onclick={addSubscription}>
-			Download
-		</Button>
-	{/snippet}
-</Dialog>
-
 <Dialog bind:open={previewOpen} wide title={`Final config — ${preview.name}`} description="Read-only config generated from this profile with the current settings, rules, and custom proxy groups.">
 	<div class="editor"><YamlEditor value={preview.content} readOnly /></div>
 	{#snippet footer()}
@@ -290,6 +227,7 @@ rules:
 	}
 	.title {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2);
 	}
@@ -314,12 +252,13 @@ rules:
 	.small {
 		font-size: var(--text-xs);
 	}
-	.label {
-		font-size: var(--text-sm);
-		font-weight: var(--weight-medium);
-	}
+
 	.editor {
 		flex: 1;
 		min-height: 0;
 	}
+    .title strong { min-width: 0; overflow-wrap: anywhere; }
+    .profile.android { flex-direction: column; }
+    .profile.android .info { width: 100%; flex: auto; }
+    .profile.android .actions { flex-wrap: wrap; max-width: 100%; }
 </style>

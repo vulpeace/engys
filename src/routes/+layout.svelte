@@ -3,6 +3,7 @@
 	import { untrack } from 'svelte';
 	import type { LayoutProps } from './$types';
 	import Sidebar from '#lib/components/Sidebar.svelte';
+	import SubscriptionLinkImport from '#lib/components/SubscriptionLinkImport.svelte';
 	import { Toaster, EmptyState } from '#lib/ui/index.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
 	import { live } from '#lib/stores/live.svelte.ts';
@@ -44,7 +45,7 @@
 	});
 </script>
 
-<div class="app">
+<div class="app" class:android={core.android}>
 	<Sidebar />
 	<main>
 		{#if initError}
@@ -57,12 +58,13 @@
 		{/if}
 	</main>
 </div>
+{#if ready}<SubscriptionLinkImport />{/if}
 <Toaster />
 
 <style>
 	.app {
 		display: flex;
-		height: 100vh;
+		height: 100dvh;
 		overflow: hidden;
 	}
 	main {
@@ -74,4 +76,9 @@
 		padding: var(--space-5);
 		overflow-y: auto;
 	}
+    @media (max-width: 700px) {
+        .app { flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+        main { padding: var(--space-3); }
+    }
+    .app.android { flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 </style>

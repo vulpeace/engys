@@ -1,0 +1,4 @@
+-keep class go.** { *; }
+-keep class dev.mihomo.vpn.mobile.** { *; }
+-keep class dev.mihomo.vpn.VpnPlugin { *; }
+-keep class dev.mihomo.vpn.*Args { *; }

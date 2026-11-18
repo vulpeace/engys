@@ -48,7 +48,7 @@
 		<Switch
 			label="TUN mode"
 			checked={enabled}
-			disabled={core.tunBusy || unsupported || (!enabled && !perm?.granted)}
+			disabled={core.tunBusy || unsupported || (!core.android && !enabled && !perm?.granted)}
 			onCheckedChange={toggle}
 		/>
 	{/snippet}

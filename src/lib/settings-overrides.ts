@@ -3,6 +3,7 @@ import type { Settings } from '#lib/api/backend.ts';
 export const PROFILE_FIELDS = {
 	'external-controller': ['controllerPort'], secret: ['secret'], 'mixed-port': ['mixedPort'],
 	'allow-lan': ['allowLan'], ipv6: ['ipv6'], 'log-level': ['logLevel'], mode: ['mode'],
+	'tun.include-package': ['tun', 'includePackage'], 'tun.exclude-package': ['tun', 'excludePackage'],
 	'tun.enable': ['tun', 'enable'], 'tun.stack': ['tun', 'stack'],
 	'tun.auto-route': ['tun', 'autoRoute'], 'tun.strict-route': ['tun', 'strictRoute'],
 	'tun.auto-detect-interface': ['tun', 'autoDetectInterface'], 'tun.dns-hijack': ['tun', 'dnsHijack'],
@@ -13,6 +14,7 @@ export type ProfileField = keyof typeof PROFILE_FIELDS;
 export const PROFILE_FIELD_LABELS: Record<ProfileField, string> = {
 	'external-controller': 'controller port', secret: 'controller secret', 'mixed-port': 'mixed port',
 	'allow-lan': 'Allow LAN', ipv6: 'IPv6', 'log-level': 'log level', mode: 'mode',
+	'tun.include-package': 'included Android apps', 'tun.exclude-package': 'excluded Android apps',
 	'tun.enable': 'TUN mode', 'tun.stack': 'TUN stack', 'tun.auto-route': 'auto route',
 	'tun.strict-route': 'strict route', 'tun.auto-detect-interface': 'interface detection',
 	'tun.dns-hijack': 'DNS hijack', 'tun.dns-mode': 'system DNS integration',

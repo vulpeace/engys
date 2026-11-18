@@ -39,6 +39,8 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TunSettings {
+    pub include_package: Vec<String>,
+    pub exclude_package: Vec<String>,
     pub enable: bool,
     /// system | gvisor | mixed | mips
     pub stack: String,
@@ -64,6 +66,8 @@ pub struct TunSettings {
 impl Default for TunSettings {
     fn default() -> Self {
         Self {
+            include_package: Vec::new(),
+            exclude_package: Vec::new(),
             enable: false,
             stack: "mixed".into(),
             auto_route: true,
@@ -119,6 +123,8 @@ pub const PROFILE_FIELDS: &[(&str, &str)] = &[
     ("log-level", "/logLevel"),
     ("mode", "/mode"),
     ("tun.enable", "/tun/enable"),
+    ("tun.include-package", "/tun/includePackage"),
+    ("tun.exclude-package", "/tun/excludePackage"),
     ("tun.stack", "/tun/stack"),
     ("tun.auto-route", "/tun/autoRoute"),
     ("tun.strict-route", "/tun/strictRoute"),

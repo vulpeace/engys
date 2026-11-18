@@ -2,25 +2,48 @@ mod commands;
 mod custom_groups;
 mod routing;
 mod app_rules;
+#[cfg(not(target_os = "android"))]
 mod desktop;
+#[cfg(target_os = "android")]
+#[path = "desktop_android.rs"]
+mod desktop;
+#[cfg(not(target_os = "android"))]
 mod instance;
 mod login;
 mod session;
+mod core_config;
+#[cfg(not(target_os = "android"))]
 mod core;
+#[cfg(target_os = "android")]
+#[path = "core_android.rs"]
+mod core;
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(not(target_os = "android"))]
+mod core_update;
+#[cfg(target_os = "android")]
+#[path = "core_update_android.rs"]
 mod core_update;
 mod error;
 mod privilege;
+#[cfg(not(target_os = "android"))]
+mod processes;
+#[cfg(target_os = "android")]
+#[path = "processes_android.rs"]
 mod processes;
 mod profiles;
 mod settings;
 mod subscription;
 mod subscription_refresh;
+mod subscription_links;
 mod util;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::{Manager, RunEvent};
+use tauri::Manager;
+#[cfg(not(target_os = "android"))]
+use tauri::RunEvent;
 
 use crate::core::CoreManager;
 use crate::profiles::ProfileStore;
@@ -57,8 +80,18 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(code) = login::maintenance(&args) { std::process::exit(code); }
     let background = args.iter().any(|a| a == "--autostart");
+    #[cfg(not(target_os = "android"))]
     let handoff = args.iter().any(|a| a == "--elevated-handoff");
-    let app = tauri::Builder::default()
+    #[cfg(not(target_os = "android"))]
+    let launch_link = args.get(1).filter(|arg| args.len() == 2 && subscription_links::is_link(arg));
+    #[cfg(not(target_os = "android"))]
+    let launch_link = launch_link.cloned();
+    let builder = tauri::Builder::default()
+        .manage(subscription_links::SubscriptionLinks::default())
+        .plugin(tauri_plugin_deep_link::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_android_vpn::init());
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_log::Builder::default()
@@ -69,7 +102,8 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             #[allow(unused_mut)]
-            let Some(mut instance) = instance::Instance::acquire(&config_dir, background, handoff)? else {
+            #[cfg(not(target_os = "android"))]
+            let Some(mut instance) = instance::Instance::acquire(&config_dir, background, handoff, launch_link.as_deref())? else {
                 app.handle().exit(0);
                 return Ok(());
             };
@@ -77,13 +111,16 @@ pub fn run() {
             if !background && !handoff && !privilege::is_elevated() {
                 if let Ok(status) = login::status() {
                     if status.enabled && !status.needs_repair {
-                        std::fs::write(config_dir.join("show-on-launch"), b"open")?;
+                        util::write_atomic(
+                            &config_dir.join("show-on-launch"),
+                            launch_link.as_deref().unwrap_or("open").as_bytes(),
+                        )?;
                         // Release the lock before starting the elevated replacement.
                         drop(instance);
                         if let Err(error) = login::run() {
                             let _ = std::fs::remove_file(config_dir.join("show-on-launch"));
                             log::error!("Could not launch the elevated login task: {error}");
-                            let Some(reacquired) = instance::Instance::acquire(&config_dir, false, false)? else {
+                            let Some(reacquired) = instance::Instance::acquire(&config_dir, false, false, launch_link.as_deref())? else {
                                 app.handle().exit(0);
                                 return Ok(());
                             };
@@ -95,7 +132,9 @@ pub fn run() {
                     }
                 }
             }
+            #[cfg(not(target_os = "android"))]
             instance.listen(app.handle().clone())?;
+            #[cfg(not(target_os = "android"))]
             app.manage(instance);
             let paths = Paths {
                 settings_file: config_dir.join("settings.json"),
@@ -112,6 +151,7 @@ pub fn run() {
             log::info!("config: {}, data: {}", config_dir.display(), data_dir.display());
 
             let session = session::Session::load(&config_dir.join("session.json"));
+            #[cfg(not(target_os = "android"))]
             let resume = session.core_running;
             app.manage(AppState {
                 session: Mutex::new(session),
@@ -130,8 +170,42 @@ pub fn run() {
             subscription_refresh::start_scheduler(app.handle().clone());
             let foreground_request = config_dir.join("show-on-launch");
             let foreground = foreground_request.exists();
-            if foreground { let _ = std::fs::remove_file(foreground_request); }
+            if foreground {
+                #[cfg(windows)]
+                if let Ok(link) = std::fs::read_to_string(&foreground_request) {
+                    subscription_links::enqueue(app.handle(), link);
+                }
+                let _ = std::fs::remove_file(foreground_request);
+            }
+            #[cfg(not(target_os = "android"))]
+            if let Some(link) = launch_link.clone() {
+                subscription_links::enqueue(app.handle(), link);
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                #[cfg(target_os = "linux")]
+                if app.env().appimage.is_some()
+                    && matches!(app.deep_link().is_registered("mihomo-client"), Ok(false))
+                {
+                    if let Err(error) = app.deep_link().register_all() {
+                        log::warn!("Could not register subscription links: {error}");
+                    }
+                }
+                #[cfg(target_os = "android")]
+                {
+                    let handle = app.handle().clone();
+                    app.deep_link().on_open_url(move |event| {
+                        for url in event.urls() {
+                            subscription_links::enqueue(&handle, url.to_string());
+                        }
+                    });
+                }
+            }
             if !background || foreground { desktop::show(app.handle()); }
+            #[cfg(target_os = "android")]
+            android::initialize(app.handle());
+            #[cfg(not(target_os = "android"))]
             if resume {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -160,6 +234,7 @@ pub fn run() {
             commands::profile_create_inline,
             commands::profile_import_file,
             commands::profile_add_remote,
+            subscription_links::take_subscription_links,
             commands::profile_update_remote,
             commands::profile_set_update_interval,
             commands::profile_reset_update_interval,
@@ -170,7 +245,14 @@ pub fn run() {
             commands::profile_delete,
             commands::profile_activate,
             commands::processes_list,
+            commands::installed_app_icon,
+            commands::platform_info,
+            commands::android_setup_status,
+            commands::android_request_battery,
+            commands::android_request_notifications,
+            commands::android_vpn_active,
             commands::client_memory,
+            commands::android_memory,
             commands::routing_get,
             commands::routing_save,
             commands::custom_groups_get,
@@ -185,10 +267,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|handle, event| {
+    app.run(|_handle, _event| {
         // Never leave an orphaned core behind.
-        if let RunEvent::Exit = event {
-            if let Some(state) = handle.try_state::<AppState>() {
+        #[cfg(not(target_os = "android"))]
+        if let RunEvent::Exit = _event {
+            if let Some(state) = _handle.try_state::<AppState>() {
                 state.exiting.store(true, std::sync::atomic::Ordering::SeqCst);
                 state.core.lock().unwrap().shutdown_blocking();
             }

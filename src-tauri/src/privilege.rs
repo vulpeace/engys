@@ -15,6 +15,7 @@ use serde::Serialize;
 
 #[cfg(target_os = "linux")]
 use crate::error::Error;
+#[cfg(not(target_os = "android"))]
 use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize)]
@@ -246,7 +247,7 @@ pub fn run_elevated(arguments: &str, wait: bool) -> Result<()> {
 // Other platforms
 // ---------------------------------------------------------------------------
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
 pub fn check(_bin: &Path) -> TunPermission {
     TunPermission {
         granted: false,
@@ -256,7 +257,7 @@ pub fn check(_bin: &Path) -> TunPermission {
     }
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
 pub fn grant(_bin: &Path) -> Result<()> {
     Err(crate::error::Error::msg("TUN mode is not supported on this platform yet."))
 }
@@ -279,4 +280,10 @@ mod tests {
         assert!(eff);
         assert_eq!(perm, permitted as u64);
     }
+}
+
+#[cfg(target_os = "android")]
+pub fn check(_: &Path) -> TunPermission {
+    // Consent is checked by the native service immediately before establishment.
+    TunPermission { granted: true, method: "vpn", can_grant: true, detail: "Android VPN consent is required before connection.".into() }
 }
