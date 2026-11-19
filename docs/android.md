@@ -4,7 +4,7 @@ Android is a target of the existing Tauri project. The Svelte frontend and Rust 
 
 ## Build
 
-Install Bash, Python 3, unzip, Node 22+, pnpm 10, Rust, JDK 17, Go 1.26, the Android SDK command-line tools, SDK platform 36, build-tools 35.0.0, and NDK 28.2.13676358. Set `ANDROID_HOME` to the SDK and `NDK_HOME` to its `ndk/28.2.13676358` directory. Go, Java and pnpm must be on PATH.
+Install Bash, Python 3, unzip, Node 22+, pnpm 10, Rust, JDK 17, Go 1.26.11 or newer, the Android SDK command-line tools, SDK platform 36, build-tools 35.0.0, and NDK 28.2.13676358. Set `ANDROID_HOME` to the SDK and `NDK_HOME` to its `ndk/28.2.13676358` directory. Go, Java and pnpm must be on PATH.
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android

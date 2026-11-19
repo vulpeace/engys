@@ -215,7 +215,11 @@ fn extract(name: &str, data: &[u8]) -> Result<Vec<u8>> {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data))
             .map_err(|e| Error::msg(format!("Bad zip: {e}")))?;
         let idx = (0..zip.len())
-            .find(|&i| zip.by_index(i).map(|f| f.name().ends_with(".exe")).unwrap_or(false))
+            .find(|&i| {
+                zip.by_index(i).is_ok_and(|entry| {
+                    entry.is_file() && entry.name().is_ok_and(|name| name.ends_with(".exe"))
+                })
+            })
             .ok_or_else(|| Error::msg("No .exe in the release archive"))?;
         zip.by_index(idx)
             .map_err(|e| Error::msg(e.to_string()))?
@@ -402,6 +406,23 @@ fn replace_binary(source: &Path, target: &Path, backup: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_a_deflated_windows_executable_from_zip() {
+        use std::io::{Cursor, Write};
+        use zip::write::SimpleFileOptions;
+
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file("README.txt", SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"release notes").unwrap();
+        zip.start_file(
+            "mihomo.exe",
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
+        ).unwrap();
+        zip.write_all(b"windows core").unwrap();
+        let archive = zip.finish().unwrap().into_inner();
+        assert_eq!(extract("mihomo.zip", &archive).unwrap(), b"windows core");
+    }
 
     #[test]
     fn requires_a_valid_digest_and_rejects_equal_size_tampering() {
