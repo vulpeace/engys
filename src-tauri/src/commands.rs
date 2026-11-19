@@ -221,7 +221,7 @@ pub fn profile_rename(state: State<'_, AppState>, id: String, name: String) -> R
 }
 
 #[tauri::command]
-pub async fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()> {
+pub async fn profile_delete(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<()> {
     let _operation = state.core_operation.lock().await;
     let core_profile = {
         let settings = crate::settings::current(&state);
@@ -230,7 +230,11 @@ pub async fn profile_delete(state: State<'_, AppState>, id: String) -> Result<()
     if core_profile.as_deref() == Some(id.as_str()) {
         return Err(Error::msg("This profile is in use by the running core. Stop the core or activate another profile first."));
     }
-    state.profiles.lock().unwrap().delete(&id)
+    state.profiles.lock().unwrap().delete(&id, || {
+        state.app_rules.lock().unwrap().remove_profile(&state.paths.app_rules_file, &id)
+    })?;
+    crate::subscription_refresh::emit_profiles(&app);
+    Ok(())
 }
 
 /// Mark a profile active; if the core is running, hot-reload it. On failure

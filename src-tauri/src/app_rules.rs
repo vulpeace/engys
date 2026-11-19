@@ -104,6 +104,18 @@ impl RulesFile {
             .get(profile_id.unwrap_or(""))
             .copied()
     }
+
+    pub fn remove_profile(&mut self, path: &Path, id: &str) -> Result<()> {
+        if self.profile_rules(Some(id)).is_none() && self.order_override(Some(id)).is_none() {
+            return Ok(());
+        }
+        let mut next = self.clone();
+        next.by_profile.remove(id);
+        next.select_through_proxy_overrides.remove(id);
+        persist(path, &next)?;
+        *self = next;
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -607,6 +619,48 @@ mod tests {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+
+    #[test]
+    fn deleting_a_profile_cleans_up_its_app_rules_and_rolls_back_on_write_failure() {
+        use crate::profiles::{new_profile, ProfileKind, ProfileStore};
+
+        let dir = std::env::temp_dir().join(format!("mihomo-delete-profile-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("app-rules.json");
+        let profile_dir = dir.join("profiles");
+        let mut profiles = ProfileStore::load(profile_dir.clone());
+        let removed = profiles.add(new_profile("Remove".into(), ProfileKind::Inline, None), "rules: []").unwrap();
+        let kept = profiles.add(new_profile("Keep".into(), ProfileKind::Inline, None), "rules: []").unwrap();
+        let rule = AppRule {
+            id: "browser".into(),
+            kind: MatchKind::ProcessName,
+            value: "browser".into(),
+            target: "GLOBAL".into(),
+        };
+        let mut config = RulesFile { rules: vec![rule.clone()], ..Default::default() };
+        config.save_rules(Scope::Profile, Some(&removed.id), vec![rule.clone()]).unwrap();
+        config.save_rules(Scope::Profile, Some(&kept.id), vec![]).unwrap();
+        config.select_through_proxy_overrides.insert(removed.id.clone(), true);
+        config.select_through_proxy_overrides.insert(kept.id.clone(), false);
+        persist(&path, &config).unwrap();
+
+        std::fs::create_dir(path.with_extension("tmp")).unwrap();
+        assert!(profiles.delete(&removed.id, || config.remove_profile(&path, &removed.id)).is_err());
+        assert_eq!(profiles.read_content(&removed.id).unwrap(), "rules: []");
+        assert_eq!(ProfileStore::load(profile_dir.clone()).active().unwrap().id, removed.id);
+        assert_eq!(load(&path).unwrap().order_override(Some(&removed.id)), Some(true));
+        std::fs::remove_dir(path.with_extension("tmp")).unwrap();
+
+        profiles.delete(&removed.id, || config.remove_profile(&path, &removed.id)).unwrap();
+        let restored = load(&path).unwrap();
+        assert!(restored.profile_rules(Some(&removed.id)).is_none());
+        assert_eq!(restored.order_override(Some(&removed.id)), None);
+        assert_eq!(restored.order_override(Some(&kept.id)), Some(false));
+        assert!(restored.rules_for_profile(Some(&kept.id)).is_empty());
+        assert_eq!(restored.rules, vec![rule]);
+        assert!(!profiles.content_path(&removed.id).exists());
+        assert_eq!(ProfileStore::load(profile_dir).active().unwrap().id, kept.id);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn profile_scope_replaces_global_rules_and_keeps_its_list_when_disabled() {

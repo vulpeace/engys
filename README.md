@@ -185,7 +185,8 @@ Use the header dropdown to choose **Global** or **This profile**. Global is the 
 default. The first time you choose This profile for a profile with no saved list, the draft starts
 with a copy of the Global rules. **Save & apply** saves and activates the selected scope for the current
 profile. Its own list replaces the shared list, including when saved empty. Switching back to Global
-keeps the saved profile list available for later use.
+keeps the saved profile list available for later use. Deleting a profile removes its app list
+and ordering override.
 
 Both lists live in `<config>/app-rules.json` and survive app restarts. Nonempty lists are inserted into
 the generated runtime config with `find-process-mode: always`. An empty list leaves the profile's rules

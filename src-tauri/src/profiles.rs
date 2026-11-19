@@ -159,14 +159,29 @@ impl ProfileStore {
         Ok(p)
     }
 
-    pub fn delete(&mut self, id: &str) -> Result<()> {
+    pub fn delete(&mut self, id: &str, cleanup: impl FnOnce() -> Result<()>) -> Result<()> {
         self.get(id)?;
+        let previous = self.index.clone();
         self.index.profiles.retain(|p| p.id != id);
         if self.index.active.as_deref() == Some(id) {
             self.index.active = self.index.profiles.first().map(|p| p.id.clone());
         }
+        if let Err(error) = self.save_index() {
+            self.index = previous;
+            return Err(error);
+        }
+        if let Err(error) = cleanup() {
+            let deleted = std::mem::replace(&mut self.index, previous);
+            if let Err(rollback) = self.save_index() {
+                self.index = deleted;
+                return Err(Error::msg(format!(
+                    "{error} Restoring the profile index also failed: {rollback}"
+                )));
+            }
+            return Err(error);
+        }
         let _ = std::fs::remove_file(self.content_path(id));
-        self.save_index()
+        Ok(())
     }
 
     pub fn set_active(&mut self, id: &str) -> Result<()> {
