@@ -20,6 +20,9 @@ Tauri runs `build:frontend` before compiling the desktop app. Its Linux packagin
 hook embeds `X-AppImage-Version` from `package.json` in the desktop entry so
 AppImage properties show the version too, including with `pnpm tauri build`.
 
+Pushing a Git tag runs the Android and Linux build workflows. Download the debug APKs and the
+x86-64 AppImage from the workflow runs' artifacts. The signed Android release workflow runs on demand.
+
 The core binary is resolved in this order: **Settings → Core → mihomo binary** (explicit path) → the
 **app-managed core** in `<data>/core-bin/` → a `mihomo` file next to the app executable (bundled sidecar) →
 `mihomo` on `PATH`.
@@ -380,3 +383,15 @@ Example: `mihomo-client://import-sub?url=https%3A%2F%2Fexample.com%2Fconfig.yaml
 
 On Linux, launch the AppImage once to register the scheme if your desktop has
 not already registered it.
+
+## Credits
+
+The Android Go bridge adapts VPN socket protection and app identification hooks
+from [FlClash by chen08209 and contributors](https://github.com/chen08209/FlClash/blob/43a7af80bb0d3ce25c99efeca9868ee6abfed7c7/core/lib.go#L30-L153)
+and listener shutdown code from [FlClashX by pluralplay and contributors](https://github.com/pluralplay/FlClashX/blob/99ae586c4c10396007878cd8e2b846c8f8f88286/core/lifecycle.go).
+Mihomo Client modified these sections for its Android host interface and core
+lifecycle on 2026-11-19. The adapted code is distributed under the
+[GNU General Public License, version 3](LICENSE).
+
+Android also embeds the [Mihomo core by MetaCubeX and contributors](https://github.com/MetaCubeX/mihomo).
+See [Android distribution](docs/android.md#distribution) for redistribution details.

@@ -22,6 +22,14 @@ Gradle builds `core-mobile` using pinned gomobile tools and mihomo dependencies,
 
 APKs are written under `src-tauri/gen/android/app/build/outputs/apk`. Debug APKs use Android's development signing key.
 
+## Distribution
+
+The workflow run identifies the GitHub commit used to build its APK or App Bundle.
+When sharing a binary outside the workflow run, link to the exact build commit
+and make the matching Corresponding Source available at no charge. The Go
+dependency versions, including the embedded Mihomo core, are pinned in
+`core-mobile/go.mod`. See [GPLv3 section 6](https://www.gnu.org/licenses/gpl-3.0.html#section6).
+
 ## Signed release builds
 
 Initialize the release identity once:

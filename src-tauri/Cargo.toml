@@ -1,6 +1,6 @@
 [package]
 name = "mihomo-client"
-version = "1.0.0"
+version = "1.1.0"
 description = "Desktop GUI for the mihomo proxy core"
 authors = []
 license = ""
