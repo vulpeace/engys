@@ -90,9 +90,11 @@ export type ProfileIndex = { active: string | null; profiles: Profile[] };
 
 export type AppMatchKind = 'processName' | 'processPath' | 'processNameRegex' | 'processPathRegex';
 export type AppRule = { id: string; kind: AppMatchKind; value: string; target: string };
+export type AppRulesScope = 'global' | 'profile';
 export type AppRulesView = {
-    rules: AppRule[]; targets: string[]; activeProfile: string | null;
-    selectThroughProxy: boolean; inferredSelectThroughProxy: boolean | null; orderOverride: boolean | null;
+    scope: AppRulesScope; globalRules: AppRule[]; profileRules: AppRule[] | null;
+    targets: string[]; activeProfile: string | null;
+    inferredSelectThroughProxy: boolean | null; orderOverride: boolean | null;
 };
 
 export type CustomProxyGroup = {
@@ -173,7 +175,8 @@ export const backend = {
 	profileActivate: (id: string) => invoke<void>('profile_activate', { id }),
 
 	appRulesGet: () => invoke<AppRulesView>('app_rules_get'),
-	appRulesSave: (rules: AppRule[], orderOverride: boolean | null) => invoke<AppRulesView>('app_rules_save', { rules, orderOverride }),
+	appRulesSave: (expectedProfile: string | null, scope: AppRulesScope, rules: AppRule[], orderOverride: boolean | null) =>
+		invoke<AppRulesView>('app_rules_save', { expectedProfile, scope, rules, orderOverride }),
     installedAppIcon: (packageName: string) => invoke<string | null>('installed_app_icon', { packageName }),
 	processesList: () => invoke<ProcessEntry[]>('processes_list'),
 

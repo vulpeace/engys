@@ -55,9 +55,50 @@ impl AppRule {
 pub struct RulesFile {
     pub rules: Vec<AppRule>,
     pub select_through_proxy_overrides: BTreeMap<String, bool>,
+    by_profile: BTreeMap<String, ProfileRules>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileRules {
+    enabled: bool,
+    rules: Vec<AppRule>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Scope {
+    Global,
+    Profile,
 }
 
 impl RulesFile {
+    fn profile_rules(&self, profile_id: Option<&str>) -> Option<&ProfileRules> {
+        profile_id.and_then(|id| self.by_profile.get(id))
+    }
+
+    pub fn rules_for_profile(&self, profile_id: Option<&str>) -> &[AppRule] {
+        self.profile_rules(profile_id)
+            .filter(|profile| profile.enabled)
+            .map_or(&self.rules, |profile| &profile.rules)
+    }
+
+    fn save_rules(&mut self, scope: Scope, profile_id: Option<&str>, rules: Vec<AppRule>) -> Result<()> {
+        match scope {
+            Scope::Global => {
+                self.rules = rules;
+                if let Some(profile) = profile_id.and_then(|id| self.by_profile.get_mut(id)) {
+                    profile.enabled = false;
+                }
+            }
+            Scope::Profile => {
+                let id = profile_id.ok_or_else(|| Error::msg("Select a profile before saving profile-specific app rules."))?;
+                self.by_profile.insert(id.into(), ProfileRules { enabled: true, rules });
+            }
+        }
+        Ok(())
+    }
+
     pub fn order_override(&self, profile_id: Option<&str>) -> Option<bool> {
         self.select_through_proxy_overrides
             .get(profile_id.unwrap_or(""))
@@ -68,10 +109,11 @@ impl RulesFile {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RulesView {
-    pub rules: Vec<AppRule>,
+    pub scope: Scope,
+    pub global_rules: Vec<AppRule>,
+    pub profile_rules: Option<Vec<AppRule>>,
     pub targets: Vec<String>,
     pub active_profile: Option<String>,
-    pub select_through_proxy: bool,
     pub inferred_select_through_proxy: Option<bool>,
     pub order_override: Option<bool>,
 }
@@ -82,6 +124,9 @@ pub fn load(path: &Path) -> Result<RulesFile> {
             let saved: RulesFile = serde_json::from_slice(&bytes)
                 .map_err(|e| Error::msg(format!("Cannot read app rules at {}: {e}", path.display())))?;
             validate(&saved.rules)?;
+            for profile in saved.by_profile.values() {
+                validate(&profile.rules)?;
+            }
             Ok(saved)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RulesFile::default()),
@@ -282,8 +327,22 @@ fn active_profile(state: &AppState) -> Result<(Option<String>, String)> {
     }
 }
 
-pub fn view(app: &AppHandle) -> Result<RulesView> {
+fn rules_view(saved: &RulesFile, active_profile: Option<String>, root: &Mapping) -> RulesView {
+    let profile = saved.profile_rules(active_profile.as_deref());
+    RulesView {
+        scope: if profile.is_some_and(|profile| profile.enabled) { Scope::Profile } else { Scope::Global },
+        global_rules: saved.rules.clone(),
+        profile_rules: profile.map(|profile| profile.rules.clone()),
+        targets: targets(root),
+        order_override: saved.order_override(active_profile.as_deref()),
+        inferred_select_through_proxy: infer_select_through_proxy(root),
+        active_profile,
+    }
+}
+
+pub async fn view(app: &AppHandle) -> Result<RulesView> {
     let state = app.state::<AppState>();
+    let _operation = state.core_operation.lock().await;
     let (active_profile, content) = active_profile(&state)?;
     let content = crate::routing::apply_profile(&state, active_profile.as_deref(), &content)?;
     let mut root = match serde_yaml::from_str::<Value>(&content)? {
@@ -293,25 +352,26 @@ pub fn view(app: &AppHandle) -> Result<RulesView> {
     };
     let groups = state.custom_groups.lock().unwrap().for_profile(active_profile.as_deref()).to_vec();
     crate::custom_groups::inject(&mut root, &groups)?;
-    let saved = state.app_rules.lock().unwrap().clone();
-    let inferred_select_through_proxy = infer_select_through_proxy(&root);
-    let order_override = saved.order_override(active_profile.as_deref());
-    Ok(RulesView {
-        rules: saved.rules,
-        targets: targets(&root),
-        select_through_proxy: order_override.or(inferred_select_through_proxy).unwrap_or(false),
-        inferred_select_through_proxy,
-        order_override,
-        active_profile,
-    })
+    let saved = state.app_rules.lock().unwrap();
+    Ok(rules_view(&saved, active_profile, &root))
 }
 
 /// Validate first, then commit disk and live config as one serialized operation.
 /// Rejected rules leave the previous runtime and saved rules intact.
-pub async fn save(app: AppHandle, rules: Vec<AppRule>, order_override: Option<bool>) -> Result<RulesView> {
+pub async fn save(
+    app: AppHandle,
+    expected_profile: Option<String>,
+    scope: Scope,
+    rules: Vec<AppRule>,
+    order_override: Option<bool>,
+) -> Result<RulesView> {
     validate(&rules)?;
     let state = app.state::<AppState>();
     let _operation = state.core_operation.lock().await;
+    let (profile_id, content) = active_profile(&state)?;
+    if profile_id != expected_profile {
+        return Err(Error::msg("The active profile changed. Reload Proxied apps before saving."));
+    }
     let settings = crate::settings::current(&state);
     let status = state.core.lock().unwrap().status(&settings);
     let mut effective = settings.clone();
@@ -325,10 +385,9 @@ pub async fn save(app: AppHandle, rules: Vec<AppRule>, order_override: Option<bo
         effective.secret = status.secret.clone();
         effective.overrides.extend(["external-controller".into(), "secret".into()]);
     }
-    let (profile_id, content) = active_profile(&state)?;
     let previous = state.app_rules.lock().unwrap().clone();
     let mut next = previous.clone();
-    next.rules = rules.clone();
+    next.save_rules(scope, profile_id.as_deref(), rules)?;
     let profile_key = profile_id.as_deref().unwrap_or("").to_owned();
     match order_override {
         Some(value) => {
@@ -340,7 +399,10 @@ pub async fn save(app: AppHandle, rules: Vec<AppRule>, order_override: Option<bo
     }
     let groups = state.custom_groups.lock().unwrap().for_profile(profile_id.as_deref()).to_vec();
     let content = crate::routing::apply_profile(&state, profile_id.as_deref(), &content)?;
-    let runtime = core::build_runtime_config_with_groups(&content, &effective, &rules, order_override, &groups)?;
+    let rules = next.rules_for_profile(profile_id.as_deref());
+    let runtime = core::build_runtime_config_with_groups(&content, &effective, rules, order_override, &groups)?;
+    let root: Mapping = serde_yaml::from_str(&runtime)?;
+    let view = rules_view(&next, profile_id.clone(), &root);
     let runtime_file = state.paths.core_dir.join(RUNTIME_CONFIG);
     let mut previous_runtime = match std::fs::read(&runtime_file) {
         Ok(bytes) => Some(bytes),
@@ -421,16 +483,7 @@ pub async fn save(app: AppHandle, rules: Vec<AppRule>, order_override: Option<bo
             core::notify_reloaded(&app, id);
         }
     }
-    let root: Mapping = serde_yaml::from_str(&runtime)?;
-    let inferred_select_through_proxy = infer_select_through_proxy(&root);
-    Ok(RulesView {
-        rules,
-        targets: targets(&root),
-        select_through_proxy: order_override.or(inferred_select_through_proxy).unwrap_or(false),
-        inferred_select_through_proxy,
-        order_override,
-        active_profile: profile_id,
-    })
+    Ok(view)
 }
 
 #[cfg(test)]
@@ -554,6 +607,36 @@ mod tests {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+
+    #[test]
+    fn profile_scope_replaces_global_rules_and_keeps_its_list_when_disabled() {
+        let mut config: RulesFile = serde_json::from_value(serde_json::json!({
+            "rules": [{ "id": "global", "kind": "processName", "value": "browser", "target": "GLOBAL" }]
+        })).unwrap();
+        let root = Mapping::new();
+        let initial = rules_view(&config, Some("profile-a".into()), &root);
+        assert_eq!(initial.scope, Scope::Global);
+        assert_eq!(initial.global_rules, config.rules);
+        assert!(initial.profile_rules.is_none());
+
+        let mut copied = initial.global_rules;
+        copied[0].target = "DIRECT".into();
+        config.save_rules(Scope::Profile, Some("profile-a"), copied.clone()).unwrap();
+        assert_eq!(config.rules_for_profile(Some("profile-a")), copied);
+        assert_eq!(config.rules_for_profile(Some("profile-b")), config.rules);
+
+        config.save_rules(Scope::Profile, Some("profile-b"), vec![]).unwrap();
+        let global = config.rules.clone();
+        config.save_rules(Scope::Global, Some("profile-a"), global.clone()).unwrap();
+        let restored: RulesFile = serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        let view = rules_view(&restored, Some("profile-a".into()), &root);
+        assert_eq!(view.scope, Scope::Global);
+        assert_eq!(view.profile_rules, Some(copied));
+        assert_eq!(restored.rules_for_profile(Some("profile-a")), global);
+        assert_eq!(rules_view(&restored, Some("profile-b".into()), &root).scope, Scope::Profile);
+        assert!(restored.rules_for_profile(Some("profile-b")).is_empty());
+    }
+
     #[test]
     fn saves_and_clears_rules_independently_of_profile_and_settings() {
         let dir = std::env::temp_dir().join(format!("mihomo-app-rules-{}", uuid::Uuid::new_v4()));

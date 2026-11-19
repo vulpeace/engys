@@ -244,12 +244,13 @@ pub async fn profile_activate(app: AppHandle, state: State<'_, AppState>, id: St
         store.set_active(&id)?;
         prev
     };
-    if let Err(e) = core::reload_locked(app).await {
+    if let Err(e) = core::reload_locked(app.clone()).await {
         if let Some(prev) = previous {
             let _ = state.profiles.lock().unwrap().set_active(&prev);
         }
         return Err(e);
     }
+    crate::subscription_refresh::emit_profiles(&app);
     Ok(())
 }
 
@@ -348,13 +349,19 @@ pub async fn login_set(enabled: bool) -> Result<crate::login::LoginStatus> {
 }
 
 #[tauri::command]
-pub fn app_rules_get(app: AppHandle) -> Result<crate::app_rules::RulesView> {
-    crate::app_rules::view(&app)
+pub async fn app_rules_get(app: AppHandle) -> Result<crate::app_rules::RulesView> {
+    crate::app_rules::view(&app).await
 }
 
 #[tauri::command]
-pub async fn app_rules_save(app: AppHandle, rules: Vec<crate::app_rules::AppRule>, order_override: Option<bool>) -> Result<crate::app_rules::RulesView> {
-    crate::app_rules::save(app, rules, order_override).await
+pub async fn app_rules_save(
+    app: AppHandle,
+    expected_profile: Option<String>,
+    scope: crate::app_rules::Scope,
+    rules: Vec<crate::app_rules::AppRule>,
+    order_override: Option<bool>,
+) -> Result<crate::app_rules::RulesView> {
+    crate::app_rules::save(app, expected_profile, scope, rules, order_override).await
 }
 
 #[tauri::command]

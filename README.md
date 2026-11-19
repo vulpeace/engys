@@ -181,13 +181,19 @@ to Proxy when on and Direct when off; existing per-app route choices are preserv
 saves it, and reloads a running core. When stopped, rules apply on the next start. Existing connections
 keep their original routing; use new connections to check changes.
 
-Rules live in `<config>/app-rules.json`, independently of settings and profiles, and survive app restarts.
-They are inserted into the generated runtime config with `find-process-mode: always`; the original profile
-file remains unchanged. Removing all entries restores the profile's original rules/process mode. Validation
-errors leave the previous configuration intact; failed live application attempts restore the previous saved
-and runtime configuration and report any rollback failure. Profile-specific targets must exist in each
-profile you activate; use GLOBAL/DIRECT/REJECT for rules shared across profiles. An explicit import button
-can bring old preview-only localStorage selections into the draft; they activate only after Save & apply.
+Use the header dropdown to choose **Global** or **This profile**. Global is the shared list used by
+default. The first time you choose This profile for a profile with no saved list, the draft starts
+with a copy of the Global rules. **Save & apply** saves and activates the selected scope for the current
+profile. Its own list replaces the shared list, including when saved empty. Switching back to Global
+keeps the saved profile list available for later use.
+
+Both lists live in `<config>/app-rules.json` and survive app restarts. Nonempty lists are inserted into
+the generated runtime config with `find-process-mode: always`. An empty list leaves the profile's rules
+and process mode in effect. Validation errors leave the previous configuration intact. Failed live
+application attempts restore the previous saved and runtime configuration and report any rollback failure.
+Named targets in the Global list must exist in each profile that uses it. GLOBAL, DIRECT, and REJECT
+are available across profiles. An explicit import button can bring old preview-only localStorage
+selections into the draft for the selected scope.
 
 App rules require **Rule mode**. In Global/Direct modes the page offers **Use Rule mode**. They route only
 traffic already reaching mihomo: enable TUN to capture applications that don't use the HTTP/SOCKS proxy.

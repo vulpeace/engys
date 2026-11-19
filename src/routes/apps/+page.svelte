@@ -4,9 +4,9 @@
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { AppWindow, FolderOpen, ListPlus, Trash2, Info, Plus, Save, Undo2, Pencil, ArrowUp, ArrowDown } from '@lucide/svelte';
-	import { open as openFile } from '@tauri-apps/plugin-dialog';
+	import { ask, open as openFile } from '@tauri-apps/plugin-dialog';
 	import { Badge, Button, Card, Dialog, EmptyState, Field, PageHeader, Select, Switch, TextField, toast } from '#lib/ui/index.ts';
-	import { backend, type AppRule, type AppMatchKind, type ProcessEntry } from '#lib/api/backend.ts';
+	import { backend, type AppRule, type AppMatchKind, type AppRulesScope, type AppRulesView, type ProcessEntry } from '#lib/api/backend.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
 
 	const MATCHES: { value: AppMatchKind; label: string }[] = $derived(core.android ? [{ value: 'processName', label: 'Package name' }, { value: 'processNameRegex', label: 'Package regex' }] : [
@@ -20,21 +20,32 @@
 		processNameRegex: 'PROCESS-NAME-REGEX', processPathRegex: 'PROCESS-PATH-REGEX'
 	};
 	const STORAGE_KEY = 'proxied-apps-mockup';
+	let view = $state.raw<AppRulesView | null>(null);
+	let scope = $state<AppRulesScope>('global');
+	let scopeSelection = $state('global');
+	let changingScope = $state(false);
 	let apps = $state<AppRule[]>([]);
-	let saved = $state<AppRule[]>([]);
-	let selectThroughProxy = $state(false);
-	let inferredSelectThroughProxy = $state<boolean | null>(null);
 	let orderOverride = $state<boolean | null>(null);
-	let savedOrderOverride = $state<boolean | null>(null);
-	let targets = $state<string[]>(['GLOBAL', 'DIRECT', 'REJECT']);
-	let activeProfile = $state<string | null>(null);
+	const targets = $derived(view?.targets ?? ['GLOBAL', 'DIRECT', 'REJECT']);
+	const activeProfile = $derived(view?.activeProfile ?? null);
+	const inferredSelectThroughProxy = $derived(view?.inferredSelectThroughProxy ?? null);
+	const selectThroughProxy = $derived(orderOverride ?? inferredSelectThroughProxy ?? false);
 	let loading = $state(true);
-	let loaded = $state(false);
 	let saving = $state(false);
+	let stale = $state(false);
+	let loadRequest = 0;
 	let error = $state('');
 	let legacy = $state<AppRule[]>([]);
 	let legacyImported = $state(false);
-	const dirty = $derived(JSON.stringify(apps) !== JSON.stringify(saved) || orderOverride !== savedOrderOverride);
+	const blocked = $derived(!view || loading || saving || stale);
+	const scopes = $derived([
+		{ value: 'global', label: 'Global' },
+		{ value: 'profile', label: 'This profile', disabled: !activeProfile }
+	]);
+	const rulesFor = (saved: AppRulesView, selected: AppRulesScope) =>
+		selected === 'profile' ? saved.profileRules ?? saved.globalRules : saved.globalRules;
+	const rulesDirty = $derived(!!view && JSON.stringify(apps) !== JSON.stringify(rulesFor(view, scope)));
+	const dirty = $derived(!!view && (rulesDirty || orderOverride !== view.orderOverride || scope !== view.scope));
 	const unavailable = $derived(apps.some((a) => !targets.includes(a.target)));
 	const targetOptions = $derived([
 		...targets.map((name) => ({ value: name, label: name === 'GLOBAL' ? 'Proxy (GLOBAL)' : name === 'DIRECT' ? 'Direct' : name === 'REJECT' ? 'Block' : name })),
@@ -67,35 +78,73 @@
 	const sameMatch = (a: AppRule, kind: AppMatchKind, value: string) =>
 		a.kind === kind && (kind.endsWith('Regex') ? a.value === value : a.value.toLowerCase() === value.toLowerCase());
 
-	async function load() {
-		loading = true;
-		try {
-			const view = await backend.appRulesGet();
-			apps = structuredClone(view.rules);
-			saved = structuredClone(view.rules);
-			targets = view.targets;
-			activeProfile = view.activeProfile;
-			selectThroughProxy = view.selectThroughProxy;
-			inferredSelectThroughProxy = view.inferredSelectThroughProxy;
-			orderOverride = view.orderOverride;
-			savedOrderOverride = view.orderOverride;
-			loaded = true;
-			error = '';
-		} catch (e) { error = String(e); }
-		finally { loading = false; }
+	function accept(next: AppRulesView) {
+		view = next;
+		scope = next.scope;
+		scopeSelection = scope;
+		apps = structuredClone(rulesFor(next, scope));
+		orderOverride = next.orderOverride;
+		error = '';
+		stale = false;
+		legacyImported = false;
+		manualOpen = false;
+		pickerOpen = false;
 	}
-	void load();
+
+	async function load(refresh = false) {
+		const request = ++loadRequest;
+		if (!refresh) loading = true;
+		try {
+			const next = await backend.appRulesGet();
+			if (request !== loadRequest) return;
+			if (refresh && view) {
+				if (view.activeProfile === next.activeProfile) {
+					view = next;
+					stale = false;
+					return;
+				}
+				if (dirty || manualOpen || pickerOpen) {
+					stale = true;
+					return;
+				}
+			}
+			accept(next);
+		} catch (e) {
+			if (request === loadRequest) error = String(e);
+		} finally {
+			if (request === loadRequest) loading = false;
+		}
+	}
+
+	async function changeScope(value: string) {
+		changingScope = true;
+		try {
+			if (!view || blocked || value === scope || (value !== 'global' && value !== 'profile')) return;
+			if (value === 'profile' && !activeProfile) return;
+			const profile = activeProfile;
+			if (rulesDirty && !(await ask('Discard unsaved application rule changes?', { title: 'Change rule scope', kind: 'warning' }))) return;
+			if (blocked || !view || activeProfile !== profile) return;
+			scope = value;
+			apps = structuredClone(rulesFor(view, scope));
+			legacyImported = false;
+			error = '';
+		} catch (e) { toast.error(e); }
+		finally {
+			scopeSelection = scope;
+			changingScope = false;
+		}
+	}
+
+	async function reload() {
+		if (dirty && !(await ask('Discard unsaved application rule changes?', { title: 'Reload Proxied apps', kind: 'warning' }))) return;
+		await load();
+	}
+
 	onMount(() => {
-		const refreshContext = () => {
-			if (!loaded || saving) return;
-			void backend.appRulesGet().then((view) => {
-				targets = view.targets;
-				activeProfile = view.activeProfile;
-				inferredSelectThroughProxy = view.inferredSelectThroughProxy;
-				if (orderOverride === null) selectThroughProxy = view.inferredSelectThroughProxy ?? false;
-			}).catch(toast.error);
-		};
-		const listeners = ['profiles-changed', 'custom-groups-changed', 'routing-changed'].map((event) => listen(event, refreshContext).catch(toast.error));
+		const listeners = ['profiles-changed', 'custom-groups-changed', 'routing-changed'].map((event) => listen(event, () => {
+			if (!loading && !saving) void load(true);
+		}).catch(toast.error));
+		void load();
 		return () => { for (const listener of listeners) void listener.then((stop) => stop?.()); };
 	});
 
@@ -121,28 +170,25 @@
 	}
 
 	async function save() {
+		if (blocked || !dirty || unavailable) return;
 		saving = true;
+		++loadRequest;
 		error = '';
 		try {
-			const view = await backend.appRulesSave($state.snapshot(apps), orderOverride);
-			apps = structuredClone(view.rules);
-			saved = structuredClone(view.rules);
-			targets = view.targets;
-			activeProfile = view.activeProfile;
-			selectThroughProxy = view.selectThroughProxy;
-			inferredSelectThroughProxy = view.inferredSelectThroughProxy;
-			orderOverride = view.orderOverride;
-			savedOrderOverride = view.orderOverride;
+			const next = await backend.appRulesSave(activeProfile, scope, $state.snapshot(apps), orderOverride);
 			if (legacyImported) {
 				try { localStorage.removeItem(STORAGE_KEY); } catch { /* Storage unavailable. */ }
 				legacy = [];
-				legacyImported = false;
 			}
+			accept(next);
 			toast.success(core.settings?.mode !== 'rule' ? 'Rules saved. Switch to Rule mode to use them.' : core.running ? 'Application rules saved and applied to new connections' : 'Application rules saved for the next core start');
 		} catch (e) {
 			error = String(e);
 			toast.error(e);
-		} finally { saving = false; }
+		} finally {
+			saving = false;
+			void load(true);
+		}
 	}
 
 	function add(kind: AppMatchKind, value: string, target = defaultTarget) {
@@ -204,8 +250,9 @@
 
 <PageHeader title="Proxied apps" subtitle="Route applications through a proxy, directly, or block them">
 	{#snippet actions()}
-		<Button disabled={!loaded || loading || saving || !dirty} onclick={() => { apps = structuredClone($state.snapshot(saved)); orderOverride = savedOrderOverride; selectThroughProxy = savedOrderOverride ?? inferredSelectThroughProxy ?? false; error = ''; legacyImported = false; }}><Undo2 size={14} /> Revert</Button>
-		<Button variant="primary" disabled={!loaded || loading || !dirty || unavailable} loading={saving} onclick={save}><Save size={14} /> Save & apply</Button>
+		<Select options={scopes} bind:value={scopeSelection} onValueChange={changeScope} disabled={blocked || changingScope} label="Application rule scope" />
+		<Button disabled={blocked || !dirty} onclick={() => { if (view) accept(view); }}><Undo2 size={14} /> Revert</Button>
+		<Button variant="primary" disabled={blocked || !dirty || unavailable} loading={saving} onclick={save}><Save size={14} /> Save & apply</Button>
 	{/snippet}
 </PageHeader>
 
@@ -215,11 +262,11 @@
 		<p>Only traffic reaching mihomo can be routed. Enable TUN to capture applications that don't use its proxy port.</p>
 	</div></div>
 	<Field label="Select through proxy" description="On: put app rules last, before the catch-all, and default new apps to Proxy. Off: put them first and default new apps to Direct. Existing route choices are preserved.">
-		<Switch label="Select through proxy" bind:checked={selectThroughProxy} disabled={!loaded || loading || saving} onCheckedChange={(value) => orderOverride = value} />
+		<Switch label="Select through proxy" checked={selectThroughProxy} disabled={blocked} onCheckedChange={(value) => orderOverride = value} />
 	</Field>
 	<div class="toolbar">
 		<span class="muted note">{orderOverride !== null ? 'Custom order for this profile.' : inferredSelectThroughProxy === null ? 'Fallback is ambiguous; application rules default to first.' : inferredSelectThroughProxy ? 'Automatic: Direct fallback detected.' : 'Automatic: Proxy fallback detected.'}</span>
-		{#if orderOverride !== null}<Button size="sm" disabled={saving} onclick={() => { orderOverride = null; selectThroughProxy = inferredSelectThroughProxy ?? false; }}>Use profile default</Button>{/if}
+		{#if orderOverride !== null}<Button size="sm" disabled={blocked} onclick={() => orderOverride = null}>Use profile default</Button>{/if}
 	</div>
 	{#if core.settings?.mode !== 'rule'}
 		<div class="mode-notice"><span>Application rules are inactive in {core.settings?.mode ?? 'the current'} mode.</span><Button size="sm" onclick={useRuleMode}>Use Rule mode</Button></div>
@@ -228,16 +275,19 @@
 	{#if unavailable}<p class="error" role="alert">Some targets are missing from the active profile. Choose available targets before saving.</p>{/if}
 </Card>
 
-{#if legacy.length && !legacyImported}
-	<Card><div class="toolbar"><span class="muted">Previous preview selections are available.</span><Button disabled={!loaded || loading || saving} onclick={importLegacy}>Import previous selections</Button></div></Card>
+{#if stale}
+	<Card><p class="error" role="alert">The active profile changed while you were editing.</p><Button disabled={loading} onclick={() => void reload().catch(toast.error)}>Load active profile</Button></Card>
 {/if}
-{#if error}<Card><p class="error selectable" role="alert">{error}</p>{#if !dirty}<Button onclick={load}>Retry</Button>{/if}</Card>{/if}
+{#if legacy.length && !legacyImported}
+	<Card><div class="toolbar"><span class="muted">Previous preview selections are available.</span><Button disabled={blocked} onclick={importLegacy}>Import previous selections</Button></div></Card>
+{/if}
+{#if error}<Card><p class="error selectable" role="alert">{error}</p>{#if !dirty}<Button disabled={loading} onclick={() => void load()}>Retry</Button>{/if}</Card>{/if}
 
 <Card title="Applications" padded={false}>
 	<div class="toolbar add-tools">
-		<Button disabled={!loaded || loading || saving} onclick={openPicker}><ListPlus size={14} /> {core.android ? 'Installed apps' : 'From running apps'}</Button>
-		{#if !core.android}<Button disabled={!loaded || loading || saving} onclick={browse}><FolderOpen size={14} /> Browse executable</Button>{/if}
-		<Button disabled={!loaded || loading || saving} onclick={() => edit()}><Plus size={14} /> Add manually</Button>
+		<Button disabled={blocked} onclick={openPicker}><ListPlus size={14} /> {core.android ? 'Installed apps' : 'From running apps'}</Button>
+		{#if !core.android}<Button disabled={blocked} onclick={browse}><FolderOpen size={14} /> Browse executable</Button>{/if}
+		<Button disabled={blocked} onclick={() => edit()}><Plus size={14} /> Add manually</Button>
 	</div>
 	{#if loading}<p class="muted loading">Loading application rules…</p>
 	{:else if !apps.length}<EmptyState title="No applications" description={core.android ? "Choose an installed application or add a package name manually." : "Pick a running application, browse to an executable, or add a name or regex manually."} />
@@ -247,12 +297,12 @@
 				<li>
 					<AppWindow size={18} />
 					<div class="app-info"><strong class="path" title={app.value}>{titleFor(app)}</strong><span class="muted kind">{MATCHES.find((m) => m.value === app.kind)?.label}</span>{#if app.kind === 'processPath'}<span class="muted mono path" title={app.value}>{app.value}</span>{/if}</div>
-					<Select options={targetOptions} bind:value={app.target} disabled={saving} label="Route for {titleFor(app)}" />
+					<Select options={targetOptions} bind:value={app.target} disabled={blocked} label="Route for {titleFor(app)}" />
 					<div class="row-actions">
-						<Button icon size="sm" disabled={saving || i === 0} title="Move rule up" onclick={() => move(i, -1)}><ArrowUp size={14} /></Button>
-						<Button icon size="sm" disabled={saving || i === apps.length - 1} title="Move rule down" onclick={() => move(i, 1)}><ArrowDown size={14} /></Button>
-						<Button icon size="sm" disabled={saving} title="Edit application rule" onclick={() => edit(app)}><Pencil size={14} /></Button>
-						<Button icon size="sm" variant="danger" disabled={saving} title="Remove application rule" onclick={() => apps.splice(i, 1)}><Trash2 size={14} /></Button>
+						<Button icon size="sm" disabled={blocked || i === 0} title="Move rule up" onclick={() => move(i, -1)}><ArrowUp size={14} /></Button>
+						<Button icon size="sm" disabled={blocked || i === apps.length - 1} title="Move rule down" onclick={() => move(i, 1)}><ArrowDown size={14} /></Button>
+						<Button icon size="sm" disabled={blocked} title="Edit application rule" onclick={() => edit(app)}><Pencil size={14} /></Button>
+						<Button icon size="sm" variant="danger" disabled={blocked} title="Remove application rule" onclick={() => apps.splice(i, 1)}><Trash2 size={14} /></Button>
 					</div>
 				</li>
 			{/each}

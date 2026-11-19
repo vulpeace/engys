@@ -257,7 +257,7 @@ pub fn preview_runtime_config(
     let runtime = build_runtime_config_with_groups(
         &content,
         &settings,
-        &apps.rules,
+        apps.rules_for_profile(Some(profile_id)),
         apps.order_override(Some(profile_id)),
         &groups,
     )?;

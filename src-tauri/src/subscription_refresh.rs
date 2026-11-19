@@ -213,7 +213,7 @@ async fn apply_download(
     let runtime = core::build_runtime_config_with_groups(
         &routed_content,
         &effective,
-        if active { &apps.rules } else { &[] },
+        if active { apps.rules_for_profile(Some(&snapshot.id)) } else { &[] },
         if active {
             apps.order_override(Some(&snapshot.id))
         } else {
