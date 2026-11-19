@@ -1,7 +1,7 @@
 use crate::{AppState, error::Result, session::Geometry};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
 struct TrayState {
     status: MenuItem<tauri::Wry>,
@@ -14,6 +14,7 @@ pub fn show(app: &AppHandle) {
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
+            let _ = window.emit("main-window-shown", ());
         }
     });
 }

@@ -166,6 +166,18 @@ or at the end. Changed source rules take the subscription's new value. Custom ru
 end if no anchor remains. Unsaved drafts require a reload if their subscription/profile changes.
 Proxied Apps rules are added separately, after this merge, using that tab's ordering toggle.
 
+Use **Duplicate profile** on the Profiles tab to copy a profile, its saved rule edits and providers,
+its custom proxy groups, and its per-profile Proxied Apps rules. The copy has its own profile ID.
+When you edit the source YAML or manually refresh a subscription and its rule list changes,
+profiles with saved rule edits offer three choices. **Merge with subscription** inserts added and
+edited rules at their previous positions in the new list. **Override subscription** keeps the
+previous effective list until you choose **Use subscription rules**. **Use subscription rules**
+clears local changes to the rule list. Custom rule-providers and Proxied Apps rules are kept.
+If an automatic refresh changes the source rule list for a profile with saved rule edits, the app
+saves the download for review and keeps using the current configuration. Review opens when the GUI
+is visible. **Review later** retains the download across restarts. Further automatic refreshes for
+that profile wait until you apply or discard the pending update.
+
 ### Proxied apps
 
 Add applications from running processes, browse to an executable, or use **Add manually** for an exact

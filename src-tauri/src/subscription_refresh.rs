@@ -1,21 +1,134 @@
 //! Subscription timers run in Rust, independently of the webview/core lifecycle.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::Semaphore;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager, ipc::Channel};
+use tokio::sync::{Semaphore, oneshot};
 
 use crate::AppState;
 use crate::core::{self, RUNTIME_CONFIG};
 use crate::error::{Error, Result};
 use crate::profiles::{Profile, ProfileKind, IntervalSource, subscription_interval};
+use crate::routing::{self, SourceRuleChoice};
 use crate::subscription::{self, Downloaded};
 use crate::util::{now_secs, write_atomic};
+
+#[derive(Serialize, Deserialize)]
+struct PendingDownload {
+    token: String,
+    source: Option<String>,
+    revision: String,
+    download: Downloaded,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReview {
+    profile_id: String,
+    profile_name: String,
+    token: String,
+}
+
+fn pending_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.pending-refresh.json"))
+}
+
+fn read_pending(dir: &Path, id: &str) -> Result<Option<PendingDownload>> {
+    match std::fs::read(pending_path(dir, id)) {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn stash_download(dir: &Path, profile: &Profile, revision: &str, download: Downloaded) -> Result<()> {
+    let pending = PendingDownload {
+        token: uuid::Uuid::new_v4().to_string(),
+        source: profile.source.clone(),
+        revision: revision.to_owned(),
+        download,
+    };
+    write_atomic(&pending_path(dir, &profile.id), &serde_json::to_vec(&pending)?)
+}
+
+pub fn clear_pending(dir: &Path, id: &str) -> Result<()> {
+    match std::fs::remove_file(pending_path(dir, id)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn matching_pending(dir: &Path, profile: &Profile, content: &str) -> Result<Option<PendingDownload>> {
+    let pending = read_pending(dir, &profile.id)?;
+    if pending.as_ref().is_some_and(|p| p.source != profile.source || p.revision != content) {
+        clear_pending(dir, &profile.id)?;
+        return Ok(None);
+    }
+    Ok(pending)
+}
+
+pub async fn pending_reviews(app: &AppHandle) -> Result<Vec<PendingReview>> {
+    let state = app.state::<AppState>();
+    let _operation = state.core_operation.lock().await;
+    #[cfg(not(target_os = "android"))]
+    if !app.get_webview_window("main").is_some_and(|window| {
+        window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false)
+    }) {
+        return Ok(Vec::new());
+    }
+    let store = state.profiles.lock().unwrap();
+    let mut reviews = Vec::new();
+    for profile in &store.index.profiles {
+        if !pending_path(&state.paths.profiles_dir, &profile.id).exists() {
+            continue;
+        }
+        let content = store.read_content(&profile.id)?;
+        if let Some(pending) = matching_pending(&state.paths.profiles_dir, profile, &content)? {
+            reviews.push(PendingReview {
+                profile_id: profile.id.clone(),
+                profile_name: profile.name.clone(),
+                token: pending.token,
+            });
+        }
+    }
+    Ok(reviews)
+}
+
+pub async fn resolve_pending(app: &AppHandle, id: &str, token: &str, choice: Option<SourceRuleChoice>) -> Result<()> {
+    let state = app.state::<AppState>();
+    let _operation = state.core_operation.lock().await;
+    let (profile, pending) = {
+        let store = state.profiles.lock().unwrap();
+        let profile = store.get(id)?.clone();
+        let content = store.read_content(id)?;
+        let pending = matching_pending(&state.paths.profiles_dir, &profile, &content)?
+            .filter(|pending| pending.token == token)
+            .ok_or_else(|| Error::msg("This pending update is no longer available."))?;
+        (profile, pending)
+    };
+    if let Some(choice) = choice {
+        apply_download(app, &profile, &pending.revision, pending.download, None, Some(choice)).await?;
+        if let Err(error) = clear_pending(&state.paths.profiles_dir, id) {
+            log::warn!("Could not remove the applied subscription download for {id}: {error}");
+        }
+    } else {
+        state.profiles.lock().unwrap().update(id, |profile| {
+            profile.last_refresh_attempt_at = Some(now_secs());
+        })?;
+        clear_pending(&state.paths.profiles_dir, id)?;
+    }
+    emit_profiles(app);
+    Ok(())
+}
 
 pub struct RefreshState {
     in_flight: Mutex<HashSet<String>>,
     slots: Semaphore,
+    rule_choices: Mutex<HashMap<String, oneshot::Sender<Option<SourceRuleChoice>>>>,
 }
 
 impl RefreshState {
@@ -23,7 +136,29 @@ impl RefreshState {
         Self {
             in_flight: Mutex::new(HashSet::new()),
             slots: Semaphore::new(4),
+            rule_choices: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn resolve_rules(&self, token: &str, choice: Option<SourceRuleChoice>) -> Result<()> {
+        let sender = self.rule_choices.lock().unwrap().remove(token)
+            .ok_or_else(|| Error::msg("This rule choice has expired. Refresh the subscription again."))?;
+        sender.send(choice).map_err(|_| Error::msg("The subscription refresh has ended."))
+    }
+
+    async fn ask_about_rules(&self, prompt: &Channel<String>) -> Result<Option<SourceRuleChoice>> {
+        let token = uuid::Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        self.rule_choices.lock().unwrap().insert(token.clone(), sender);
+        let result = match prompt.send(token.clone()) {
+            Ok(()) => tokio::time::timeout(Duration::from_secs(600), receiver).await.ok().and_then(|result| result.ok()).flatten(),
+            Err(error) => {
+                self.rule_choices.lock().unwrap().remove(&token);
+                return Err(Error::msg(error.to_string()));
+            }
+        };
+        self.rule_choices.lock().unwrap().remove(&token);
+        Ok(result)
     }
 }
 
@@ -82,14 +217,15 @@ pub fn start_scheduler(app: AppHandle) {
                     .index
                     .profiles
                     .iter()
-                    .filter(|p| is_due(p, now_secs()) && !in_flight.contains(&p.id))
+                    .filter(|p| is_due(p, now_secs()) && !in_flight.contains(&p.id)
+                        && !pending_path(&state.paths.profiles_dir, &p.id).exists())
                     .map(|p| (p.id.clone(), p.update_interval_minutes))
                     .collect::<Vec<_>>()
             };
             for (id, interval) in due {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = refresh(handle, id.clone(), Some(interval)).await {
+                    if let Err(error) = refresh(handle, id.clone(), Some(interval), None).await {
                         log::warn!("Automatic subscription refresh failed for profile {id}: {error}");
                     }
                 });
@@ -101,12 +237,17 @@ pub fn start_scheduler(app: AppHandle) {
 
 /// expected_interval identifies an automatic job. Changes to the interval,
 /// deletion, or an intervening manual refresh invalidate queued automatic work.
-pub async fn refresh(app: AppHandle, id: String, expected_interval: Option<u32>) -> Result<Profile> {
+pub async fn refresh(
+    app: AppHandle,
+    id: String,
+    expected_interval: Option<u32>,
+    prompt: Option<Channel<String>>,
+) -> Result<Option<Profile>> {
     let state = app.state::<AppState>();
     let acquired = state.subscription_refresh.in_flight.lock().unwrap().insert(id.clone());
     if !acquired {
         return if expected_interval.is_some() {
-            Ok(state.profiles.lock().unwrap().get(&id)?.clone())
+            Ok(Some(state.profiles.lock().unwrap().get(&id)?.clone()))
         } else {
             Err(Error::msg("This subscription is already being refreshed."))
         };
@@ -133,9 +274,15 @@ pub async fn refresh(app: AppHandle, id: String, expected_interval: Option<u32>)
         if expected_interval
             .is_some_and(|interval| interval != profile.update_interval_minutes || !is_due(&profile, now_secs()))
         {
-            return Ok(profile);
+            return Ok(Some(profile));
         }
         let content = store.read_content(&id)?;
+        if matching_pending(&state.paths.profiles_dir, &profile, &content)?.is_some() {
+            if expected_interval.is_some() {
+                return Ok(Some(profile));
+            }
+            return Err(Error::msg("This subscription already has an update awaiting review."));
+        }
         store.update(&id, |p| {
             p.last_refresh_attempt_at = Some(now_secs());
             p.last_refresh_error = None;
@@ -150,7 +297,22 @@ pub async fn refresh(app: AppHandle, id: String, expected_interval: Option<u32>)
             .as_deref()
             .ok_or_else(|| Error::msg("The subscription has no URL."))?;
         let downloaded = subscription::download(url, &user_agent).await?;
-        apply_download(&app, &snapshot, &old_content, downloaded, expected_interval).await
+        drop(_slot);
+        let mut rule_choice = None;
+        if let Some(prompt) = &prompt {
+            let conflict = routing::source_rule_conflict(
+                &old_content, &downloaded.content, state.routing.lock().unwrap().by_profile.get(&id),
+            )?;
+            if conflict {
+                rule_choice = state.subscription_refresh.ask_about_rules(prompt).await?;
+                if rule_choice.is_none() {
+                    return Ok(None);
+                }
+            }
+        }
+        let _operation = state.core_operation.lock().await;
+        apply_download(&app, &snapshot, &old_content, downloaded, expected_interval, rule_choice)
+            .await.map(Some)
     }
     .await;
     if let Err(error) = &result {
@@ -171,9 +333,9 @@ async fn apply_download(
     old_content: &str,
     downloaded: Downloaded,
     expected_interval: Option<u32>,
+    rule_choice: Option<SourceRuleChoice>,
 ) -> Result<Profile> {
     let state = app.state::<AppState>();
-    let _operation = state.core_operation.lock().await;
     if state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(Error::msg("The app is shutting down."));
     }
@@ -209,7 +371,29 @@ async fn apply_download(
     }
     let apps = state.app_rules.lock().unwrap().clone();
     let groups = state.custom_groups.lock().unwrap().for_profile(Some(&snapshot.id)).to_vec();
-    let routed_content = crate::routing::apply_profile(&state, Some(&snapshot.id), &downloaded.content)?;
+    let previous_routing = state.routing.lock().unwrap().clone();
+    let overlay = previous_routing.by_profile.get(&snapshot.id);
+    let mut next_routing = None;
+    if routing::source_rule_conflict(old_content, &downloaded.content, overlay)? {
+        if let Some(interval) = expected_interval {
+            let store = state.profiles.lock().unwrap();
+            let current = store.get(&snapshot.id)?;
+            if current.update_interval_minutes != interval {
+                return Ok(current.clone());
+            }
+            stash_download(&state.paths.profiles_dir, current, old_content, downloaded)?;
+            return Ok(current.clone());
+        }
+        let choice = rule_choice.ok_or_else(|| Error::msg("Rules changed during the refresh. Try refreshing again."))?;
+        if let Some(overlay) = overlay {
+            let mut next = previous_routing.clone();
+            next.by_profile.insert(snapshot.id.clone(), routing::reconcile_source(old_content, &downloaded.content, overlay, choice)?);
+            next_routing = Some(next);
+        }
+    }
+    let routed_content = routing::apply_overlay(
+        &downloaded.content, next_routing.as_ref().unwrap_or(&previous_routing).by_profile.get(&snapshot.id),
+    )?;
     let runtime = core::build_runtime_config_with_groups(
         &routed_content,
         &effective,
@@ -262,6 +446,17 @@ async fn apply_download(
         None
     };
     let now = now_secs();
+    let restore_profile = || {
+        state.profiles.lock().unwrap().replace_content(&snapshot.id, old_content, |p| {
+            p.subscription = previous.subscription.clone();
+            p.update_interval_hours = previous.update_interval_hours;
+            if p.update_interval_source == IntervalSource::Subscription {
+                p.update_interval_minutes = subscription_interval(p);
+            }
+            p.updated_at = previous.updated_at;
+            p.last_refreshed_at = previous.last_refreshed_at;
+        })
+    };
     {
         let mut store = state.profiles.lock().unwrap();
         if state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
@@ -277,6 +472,12 @@ async fn apply_download(
             update_download_metadata(p, &downloaded, now)
         })?;
     }
+    if let Some(next) = &next_routing {
+        if let Err(error) = next.save(&state.paths.routing_file) {
+            restore_profile().map_err(|rollback| Error::msg(format!("{error} Restoring the previous subscription failed: {rollback}")))?;
+            return Err(error);
+        }
+    }
     if live {
         let applied = async {
             write_atomic(&runtime_file, runtime.as_bytes())?;
@@ -285,21 +486,13 @@ async fn apply_download(
         .await;
         if let Err(error) = applied {
             let mut failures = Vec::new();
-            if let Err(e) = state
-                .profiles
-                .lock()
-                .unwrap()
-                .replace_content(&snapshot.id, old_content, |p| {
-                    p.subscription = previous.subscription;
-                    p.update_interval_hours = previous.update_interval_hours;
-                    if p.update_interval_source == IntervalSource::Subscription {
-                        p.update_interval_minutes = subscription_interval(p);
-                    }
-                    p.updated_at = previous.updated_at;
-                    p.last_refreshed_at = previous.last_refreshed_at;
-                })
-            {
+            if let Err(e) = restore_profile() {
                 failures.push(e.to_string());
+            }
+            if next_routing.is_some() {
+                if let Err(e) = previous_routing.save(&state.paths.routing_file) {
+                    failures.push(e.to_string());
+                }
             }
             if let Some(previous_runtime) = rollback_runtime {
                 if let Err(e) = write_atomic(&runtime_file, previous_runtime.as_bytes()) {
@@ -320,6 +513,9 @@ async fn apply_download(
         }
         core::notify_reloaded(app, &snapshot.id);
     }
+    if let Some(next) = next_routing {
+        *state.routing.lock().unwrap() = next;
+    }
     Ok(state.profiles.lock().unwrap().get(&snapshot.id)?.clone())
 }
 
@@ -327,6 +523,38 @@ async fn apply_download(
 mod tests {
     use super::*;
     use crate::profiles::new_profile;
+
+    #[test]
+    fn pending_download_survives_reopening_and_is_invalidated_by_source_edits() {
+        use crate::profiles::ProfileStore;
+
+        let dir = std::env::temp_dir().join(format!("mihomo-pending-review-{}", uuid::Uuid::new_v4()));
+        let before = "rules: ['MATCH,DIRECT']";
+        let after = "rules: ['MATCH,REJECT']";
+        let mut store = ProfileStore::load(dir.clone());
+        let profile = store.add(new_profile(
+            "Subscription".into(), ProfileKind::Remote, Some("https://example.invalid/profile".into()),
+        ), before).unwrap();
+        stash_download(&dir, &profile, before, Downloaded {
+            content: after.into(),
+            info: None,
+            suggested_name: None,
+            update_interval_hours: Some(12),
+        }).unwrap();
+
+        let mut reopened = ProfileStore::load(dir.clone());
+        let content = reopened.read_content(&profile.id).unwrap();
+        assert_eq!(content, before);
+        let pending = matching_pending(&dir, reopened.get(&profile.id).unwrap(), &content).unwrap().unwrap();
+        assert_eq!(pending.download.content, after);
+        assert_eq!(pending.download.update_interval_hours, Some(12));
+
+        let edited = "rules: ['MATCH,GLOBAL']";
+        reopened.write_content(&profile.id, edited).unwrap();
+        assert!(matching_pending(&dir, reopened.get(&profile.id).unwrap(), edited).unwrap().is_none());
+        assert!(read_pending(&dir, &profile.id).unwrap().is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn scheduling_respects_zero_profile_kind_and_exact_minutes() {
         let mut profile = new_profile(

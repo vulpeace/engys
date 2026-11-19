@@ -116,6 +116,24 @@ impl RulesFile {
         *self = next;
         Ok(())
     }
+
+    pub fn copy_profile(&mut self, path: &Path, source: &str, destination: &str) -> Result<()> {
+        let profile = self.profile_rules(Some(source)).cloned();
+        let order = self.order_override(Some(source));
+        if profile.is_none() && order.is_none() {
+            return Ok(());
+        }
+        let mut next = self.clone();
+        if let Some(profile) = profile {
+            next.by_profile.insert(destination.into(), profile);
+        }
+        if let Some(order) = order {
+            next.select_through_proxy_overrides.insert(destination.into(), order);
+        }
+        persist(path, &next)?;
+        *self = next;
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -619,6 +637,25 @@ mod tests {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+
+    #[test]
+    fn copying_a_profile_preserves_its_saved_app_list_and_order_independently() {
+        let dir = std::env::temp_dir().join(format!("mihomo-copy-app-rules-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("app-rules.json");
+        let mut config = RulesFile::default();
+        config.save_rules(Scope::Profile, Some("original"), vec![]).unwrap();
+        config.select_through_proxy_overrides.insert("original".into(), false);
+        config.copy_profile(&path, "original", "copy").unwrap();
+
+        let mut restored = load(&path).unwrap();
+        let copy = restored.profile_rules(Some("copy")).unwrap();
+        assert!(copy.enabled);
+        assert!(copy.rules.is_empty());
+        assert_eq!(restored.order_override(Some("copy")), Some(false));
+        restored.remove_profile(&path, "original").unwrap();
+        assert!(load(&path).unwrap().profile_rules(Some("copy")).is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn deleting_a_profile_cleans_up_its_app_rules_and_rolls_back_on_write_failure() {

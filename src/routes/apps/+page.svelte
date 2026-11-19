@@ -272,6 +272,7 @@
 		<div class="mode-notice"><span>Application rules are inactive in {core.settings?.mode ?? 'the current'} mode.</span><Button size="sm" onclick={useRuleMode}>Use Rule mode</Button></div>
 	{/if}
 	{#if !loading && !activeProfile}<p class="muted note">No active profile. Built-in targets can be saved now; select a profile before starting the core.</p>{/if}
+	{#if scope === 'profile'}<p class="muted note">To transfer these rules to another profile, duplicate this profile from the Profiles tab.</p>{/if}
 	{#if unavailable}<p class="error" role="alert">Some targets are missing from the active profile. Choose available targets before saving.</p>{/if}
 </Card>
 

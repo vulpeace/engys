@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
-	import {  Pencil, RefreshCw, Trash2, Check, Undo2, Eye } from '@lucide/svelte';
+	import { Copy, Pencil, RefreshCw, Trash2, Check, Undo2, Eye } from '@lucide/svelte';
 	import { ask } from '@tauri-apps/plugin-dialog';
 	import { Badge, Button, Card, Dialog, EmptyState, Meter, PageHeader, TextField, toast } from '#lib/ui/index.ts';
 	import ProfileActions from '#lib/components/ProfileActions.svelte';
+	import SourceRuleChoiceDialog from '#lib/components/SourceRuleChoiceDialog.svelte';
 	import YamlEditor from '#lib/components/YamlEditor.svelte';
-	import { backend, type Profile, type ProfileIndex } from '#lib/api/backend.ts';
+	import { backend, type Profile, type ProfileIndex, type SourceRuleChoice } from '#lib/api/backend.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
 	import { validProfileInterval as validInterval } from '#lib/profile-interval.ts';
 	import { bytes, dateTime, timeAgo } from '#lib/format.ts';
@@ -20,7 +21,9 @@
 	let previewOpen = $state(false);
 	let preview = $state({ name: '', content: '' });
 	let editorOpen = $state(false);
-	let editing = $state<{ id: string | null; name: string; content: string }>({ id: null, name: '', content: '' });
+	let editing = $state({ id: '', name: '', content: '', revision: '' });
+	let pendingChoices = $state.raw<{ name: string; resolve: (choice: SourceRuleChoice | null) => void }[]>([]);
+	let mounted = false;
 
 	async function refresh() {
 		index = await backend.profilesList();
@@ -28,14 +31,31 @@
 	}
 	refresh().catch(toast.error);
 	onMount(() => {
+		mounted = true;
 		const unlisten = listen<ProfileIndex>('profiles-changed', (event) => { index = event.payload; }).catch(toast.error);
-		return () => { void unlisten.then((stop) => stop?.()); };
+		return () => {
+			mounted = false;
+			for (const pending of pendingChoices) pending.resolve(null);
+			pendingChoices = [];
+			void unlisten.then((stop) => stop?.());
+		};
 	});
+
+	function chooseRules(name: string): Promise<SourceRuleChoice | null> {
+		if (!mounted) return Promise.resolve(null);
+		return new Promise((resolve) => { pendingChoices = [...pendingChoices, { name, resolve }]; });
+	}
+
+	function finishChoice(choice: SourceRuleChoice | null) {
+		const [pending, ...remaining] = pendingChoices;
+		pendingChoices = remaining;
+		pending?.resolve(choice);
+	}
 
 	async function run(key: string, fn: () => Promise<unknown>, ok?: string) {
 		busy[key] = true;
 		try {
-			await fn();
+			if (await fn() === false) return false;
 			await refresh();
 			if (ok) toast.success(ok);
 			return true;
@@ -49,7 +69,8 @@
 
 	async function edit(p: Profile) {
 		try {
-			editing = { id: p.id, name: p.name, content: await backend.profileRead(p.id) };
+			const content = await backend.profileRead(p.id);
+			editing = { id: p.id, name: p.name, content, revision: content };
 			editorOpen = true;
 		} catch (e) {
 			toast.error(e);
@@ -69,23 +90,27 @@
 	}
 
 	async function saveEditor() {
-		const { id, name, content } = editing;
+		const { id, name, content, revision } = editing;
 		const ok = await run('save', async () => {
-			if (id) {
-				await backend.profileSave(id, content);
-				const current = index.profiles.find((p) => p.id === id);
-				if (current && current.name !== name) await backend.profileRename(id, name);
-			} else {
-				await backend.profileCreateInline(name, content);
+			if (!(await backend.profileSave(id, revision, content))) {
+				const choice = await chooseRules(name);
+				if (!choice || !(await backend.profileSave(id, revision, content, choice))) return false;
 			}
-		}, id ? 'Profile saved' : 'Profile created');
+			editing.revision = content;
+			const current = index.profiles.find((p) => p.id === id);
+			if (current && current.name !== name) await backend.profileRename(id, name);
+		}, 'Profile saved');
 		if (ok) editorOpen = false;
 	}
 
 	const activate = (p: Profile) =>
 		run(`activate:${p.id}`, () => backend.profileActivate(p.id), core.running ? `Switched to ${p.name}` : undefined);
 
-	const update = (p: Profile) => run(`update:${p.id}`, () => backend.profileUpdateRemote(p.id), `Updated ${p.name}`);
+	const update = (p: Profile) =>
+		run(`update:${p.id}`, async () => !!(await backend.profileUpdateRemote(p.id, () => chooseRules(p.name))), `Updated ${p.name}`);
+
+	const duplicate = (p: Profile) =>
+		run(`duplicate:${p.id}`, () => backend.profileDuplicate(p.id), `Duplicated ${p.name}`);
 
 	async function saveInterval(p: Profile) {
 		const value = intervalDrafts[p.id] ?? String(p.updateIntervalMinutes);
@@ -174,6 +199,7 @@
 						{/if}
 						<Button size="sm" icon title="View final config" aria-label="View final config" loading={busy[`preview:${p.id}`]} onclick={() => viewFinal(p)}><Eye size={14} /></Button>
 						<Button size="sm" icon title="Edit" onclick={() => edit(p)}><Pencil size={14} /></Button>
+						<Button size="sm" icon title="Duplicate profile" aria-label="Duplicate profile" loading={busy[`duplicate:${p.id}`]} onclick={() => duplicate(p)}><Copy size={14} /></Button>
 						<Button size="sm" icon variant="danger" title="Delete" loading={busy[`delete:${p.id}`]} onclick={() => remove(p)}>
 							<Trash2 size={14} />
 						</Button>
@@ -191,7 +217,7 @@
 	{/snippet}
 </Dialog>
 
-<Dialog bind:open={editorOpen} wide title={editing.id ? 'Edit profile' : 'New inline profile'}>
+<Dialog bind:open={editorOpen} wide title="Edit profile">
 	<TextField placeholder="Profile name" bind:value={editing.name} />
 	{#if editing.id && index.profiles.find((p) => p.id === editing.id)?.kind === 'remote'}
 		<p class="muted small">Edits to a subscription profile are overwritten on the next update.</p>
@@ -202,6 +228,8 @@
 		<Button variant="primary" loading={busy.save} disabled={!editing.name.trim()} onclick={saveEditor}>Save</Button>
 	{/snippet}
 </Dialog>
+
+<SourceRuleChoiceDialog name={pendingChoices[0]?.name} onchoice={finishChoice} />
 
 <style>
 	.interval-control { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }

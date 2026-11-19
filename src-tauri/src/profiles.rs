@@ -108,6 +108,7 @@ impl ProfileStore {
     }
 
     pub fn add(&mut self, mut profile: Profile, content: &str) -> Result<Profile> {
+        let previous = self.index.clone();
         profile.id = uuid::Uuid::new_v4().simple().to_string();
         let now = now_secs();
         profile.created_at = now;
@@ -117,7 +118,11 @@ impl ProfileStore {
             self.index.active = Some(profile.id.clone());
         }
         self.index.profiles.push(profile.clone());
-        self.save_index()?;
+        if let Err(error) = self.save_index() {
+            self.index = previous;
+            let _ = std::fs::remove_file(self.content_path(&profile.id));
+            return Err(error);
+        }
         Ok(profile)
     }
 

@@ -4,6 +4,7 @@
 	import type { LayoutProps } from './$types';
 	import Sidebar from '#lib/components/Sidebar.svelte';
 	import SubscriptionLinkImport from '#lib/components/SubscriptionLinkImport.svelte';
+	import PendingSubscriptionReviews from '#lib/components/PendingSubscriptionReviews.svelte';
 	import { Toaster, EmptyState } from '#lib/ui/index.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
 	import { live } from '#lib/stores/live.svelte.ts';
@@ -58,7 +59,10 @@
 		{/if}
 	</main>
 </div>
-{#if ready}<SubscriptionLinkImport />{/if}
+{#if ready}
+	<SubscriptionLinkImport />
+	<PendingSubscriptionReviews />
+{/if}
 <Toaster />
 
 <style>

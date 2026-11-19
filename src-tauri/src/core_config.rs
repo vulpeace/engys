@@ -229,6 +229,16 @@ pub fn preview_runtime_config(
     profile_id: &str,
     content: &str,
 ) -> Result<(String, Settings)> {
+    let routed = crate::routing::apply_profile(state, Some(profile_id), content)?;
+    preview_routed_runtime_config(state, profile_id, content, &routed)
+}
+
+pub fn preview_routed_runtime_config(
+    state: &AppState,
+    profile_id: &str,
+    content: &str,
+    routed: &str,
+) -> Result<(String, Settings)> {
     let mut settings = state
         .settings
         .lock()
@@ -253,9 +263,8 @@ pub fn preview_runtime_config(
         .unwrap()
         .for_profile(Some(profile_id))
         .to_vec();
-    let content = crate::routing::apply_profile(state, Some(profile_id), content)?;
     let runtime = build_runtime_config_with_groups(
-        &content,
+        routed,
         &settings,
         apps.rules_for_profile(Some(profile_id)),
         apps.order_override(Some(profile_id)),

@@ -151,8 +151,32 @@ pub async fn profile_add_remote(app: AppHandle, state: State<'_, AppState>, url:
 
 /// Re-download a subscription; hot-reloads the core if this is the active profile.
 #[tauri::command]
-pub async fn profile_update_remote(app: AppHandle, id: String) -> Result<Profile> {
-    crate::subscription_refresh::refresh(app, id, None).await
+pub async fn profile_update_remote(app: AppHandle, id: String, prompt: tauri::ipc::Channel<String>) -> Result<Option<Profile>> {
+    crate::subscription_refresh::refresh(app, id, None, Some(prompt)).await
+}
+
+#[tauri::command]
+pub fn profile_resolve_refresh(
+    state: State<'_, AppState>,
+    token: String,
+    choice: Option<crate::routing::SourceRuleChoice>,
+) -> Result<()> {
+    state.subscription_refresh.resolve_rules(&token, choice)
+}
+
+#[tauri::command]
+pub async fn pending_subscription_reviews(app: AppHandle) -> Result<Vec<crate::subscription_refresh::PendingReview>> {
+    crate::subscription_refresh::pending_reviews(&app).await
+}
+
+#[tauri::command]
+pub async fn resolve_pending_subscription(
+    app: AppHandle,
+    id: String,
+    token: String,
+    choice: Option<crate::routing::SourceRuleChoice>,
+) -> Result<()> {
+    crate::subscription_refresh::resolve_pending(&app, &id, &token, choice).await
 }
 
 #[tauri::command]
@@ -201,18 +225,145 @@ pub fn profile_read_final(state: State<'_, AppState>, id: String) -> Result<Stri
 }
 
 #[tauri::command]
-pub async fn profile_save(app: AppHandle, state: State<'_, AppState>, id: String, content: String) -> Result<()> {
+pub async fn profile_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    revision: String,
+    content: String,
+    rule_choice: Option<crate::routing::SourceRuleChoice>,
+) -> Result<bool> {
     let _operation = state.core_operation.lock().await;
     subscription::validate_profile_yaml(&content)?;
-    let is_active = {
+    let (is_active, updated_at) = {
+        let store = state.profiles.lock().unwrap();
+        if store.read_content(&id)? != revision {
+            return Err(Error::msg("The profile changed while editing. Reopen the profile before saving."));
+        }
+        (store.index.active.as_deref() == Some(id.as_str()), store.get(&id)?.updated_at)
+    };
+    if revision == content {
+        return Ok(true);
+    }
+    let previous = state.routing.lock().unwrap().clone();
+    let overlay = previous.by_profile.get(&id);
+    let next = if crate::routing::source_rule_conflict(&revision, &content, overlay)? {
+        let Some(choice) = rule_choice else { return Ok(false); };
+        let mut next = previous.clone();
+        if let Some(overlay) = overlay {
+            next.by_profile.insert(id.clone(), crate::routing::reconcile_source(&revision, &content, overlay, choice)?);
+        }
+        Some(next)
+    } else {
+        None
+    };
+    let saved = next.as_ref().unwrap_or(&previous);
+    let routed = crate::routing::apply_overlay(&content, saved.by_profile.get(&id))?;
+    let (runtime, settings) = core::preview_routed_runtime_config(&state, &id, &content, &routed)?;
+    let status = state.core.lock().unwrap().status(&settings);
+    let binary = status.binary.as_ref().map(PathBuf::from)
+        .or_else(|| core::resolve_binary(&settings, &state.paths.core_bin_dir).ok());
+    if let Some(binary) = binary {
+        let candidate = state.paths.core_dir.join(format!("profile-{}.yaml", uuid::Uuid::new_v4()));
+        crate::util::write_atomic(&candidate, runtime.as_bytes())?;
+        let validation = core::validate_config_file(&binary, &state.paths.core_dir, &candidate).await;
+        let _ = std::fs::remove_file(candidate);
+        validation?;
+    }
+    {
         let mut store = state.profiles.lock().unwrap();
         store.write_content(&id, &content)?;
-        store.index.active.as_deref() == Some(id.as_str())
-    };
-    if is_active {
-        core::reload_locked(app).await?;
+        if let Some(next) = &next {
+            if let Err(error) = next.save(&state.paths.routing_file) {
+                store.replace_content(&id, &revision, |p| p.updated_at = updated_at)
+                    .map_err(|rollback| Error::msg(format!("{error} Restoring the previous profile failed: {rollback}")))?;
+                return Err(error);
+            }
+            *state.routing.lock().unwrap() = next.clone();
+        }
     }
-    Ok(())
+    if is_active {
+        if let Err(error) = core::reload_locked(app.clone()).await {
+            let mut failures = Vec::new();
+            if let Err(e) = state.profiles.lock().unwrap().replace_content(&id, &revision, |p| p.updated_at = updated_at) {
+                failures.push(e.to_string());
+            }
+            if next.is_some() {
+                match previous.save(&state.paths.routing_file) {
+                    Ok(()) => *state.routing.lock().unwrap() = previous,
+                    Err(e) => failures.push(e.to_string()),
+                }
+            }
+            if let Err(e) = core::reload_locked(app.clone()).await {
+                failures.push(e.to_string());
+            }
+            return Err(if failures.is_empty() { error } else {
+                Error::msg(format!("{error} Restoring the previous profile failed: {}", failures.join("; ")))
+            });
+        }
+    }
+    if let Err(error) = crate::subscription_refresh::clear_pending(&state.paths.profiles_dir, &id) {
+        log::warn!("Could not remove an outdated subscription download for {id}: {error}");
+    }
+    crate::subscription_refresh::emit_profiles(&app);
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn profile_duplicate(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<Profile> {
+    let _operation = state.core_operation.lock().await;
+    let duplicate = {
+        let mut profiles = state.profiles.lock().unwrap();
+        let mut copy = profiles.get(&id)?.clone();
+        let content = profiles.read_content(&id)?;
+        copy.name = format!("{} (copy)", copy.name);
+        copy.last_refresh_attempt_at = None;
+        copy.last_refresh_error = None;
+        let duplicate = profiles.add(copy, &content)?;
+        let mut routing = state.routing.lock().unwrap();
+        let mut groups = state.custom_groups.lock().unwrap();
+        let mut apps = state.app_rules.lock().unwrap();
+        let mut routing_written = false;
+        let mut groups_written = false;
+        let result = (|| {
+            if let Some(overlay) = routing.by_profile.get(&id).cloned() {
+                let mut next = routing.clone();
+                next.by_profile.insert(duplicate.id.clone(), overlay);
+                next.save(&state.paths.routing_file)?;
+                routing_written = true;
+                *routing = next;
+            }
+            if let Some(definitions) = groups.by_profile.get(&id).cloned() {
+                let mut next = groups.clone();
+                next.by_profile.insert(duplicate.id.clone(), definitions);
+                next.save(&state.paths.custom_groups_file)?;
+                groups_written = true;
+                *groups = next;
+            }
+            apps.copy_profile(&state.paths.app_rules_file, &id, &duplicate.id)
+        })();
+        if let Err(error) = result {
+            profiles.delete(&duplicate.id, || {
+                if routing_written {
+                    let mut next = routing.clone();
+                    next.by_profile.remove(&duplicate.id);
+                    next.save(&state.paths.routing_file)?;
+                    *routing = next;
+                }
+                if groups_written {
+                    let mut next = groups.clone();
+                    next.by_profile.remove(&duplicate.id);
+                    next.save(&state.paths.custom_groups_file)?;
+                    *groups = next;
+                }
+                Ok(())
+            }).map_err(|rollback| Error::msg(format!("{error} Removing the incomplete copy failed: {rollback}")))?;
+            return Err(error);
+        }
+        duplicate
+    };
+    crate::subscription_refresh::emit_profiles(&app);
+    Ok(duplicate)
 }
 
 #[tauri::command]
@@ -233,6 +384,9 @@ pub async fn profile_delete(app: AppHandle, state: State<'_, AppState>, id: Stri
     state.profiles.lock().unwrap().delete(&id, || {
         state.app_rules.lock().unwrap().remove_profile(&state.paths.app_rules_file, &id)
     })?;
+    if let Err(error) = crate::subscription_refresh::clear_pending(&state.paths.profiles_dir, &id) {
+        log::warn!("Could not remove the pending subscription download for {id}: {error}");
+    }
     crate::subscription_refresh::emit_profiles(&app);
     Ok(())
 }
@@ -389,8 +543,8 @@ pub async fn custom_groups_save(app: AppHandle, profile_id: String, groups: Vec<
 #[tauri::command]
 pub fn routing_get(app: AppHandle) -> Result<crate::routing::View> { crate::routing::view(&app) }
 #[tauri::command]
-pub async fn routing_save(app: AppHandle, profile_id: String, revision: String, entries: Vec<crate::routing::Entry>, providers_yaml: String, edit_inherited: bool) -> Result<crate::routing::View> {
-    crate::routing::save(app, profile_id, revision, entries, providers_yaml, edit_inherited).await
+pub async fn routing_save(app: AppHandle, profile_id: String, revision: String, entries: Vec<crate::routing::Entry>, providers_yaml: String, edit_inherited: bool, replace_rules: bool) -> Result<crate::routing::View> {
+    crate::routing::save(app, profile_id, revision, entries, providers_yaml, edit_inherited, replace_rules).await
 }
 
 #[tauri::command]

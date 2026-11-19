@@ -16,6 +16,7 @@ pub struct SubscriptionInfo {
     pub expire: Option<u64>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Downloaded {
     pub content: String,
     pub info: Option<SubscriptionInfo>,

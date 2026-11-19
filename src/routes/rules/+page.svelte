@@ -15,6 +15,7 @@
 	let entries = $state<RoutingEntry[]>([]);
 	let providersYaml = $state('');
 	let unlocked = $state(false);
+	let replaceRules = $state(false);
 	let loading = $state(false);
 	let saving = $state(false);
 	let error = $state('');
@@ -52,7 +53,7 @@
 	let providerInterval = $state('86400');
 	let payload = $state('');
 	let providerError = $state('');
-	const dirty = $derived(!!view && (JSON.stringify(entries) !== JSON.stringify(view.entries) || providersYaml !== view.providersYaml));
+	const dirty = $derived(!!view && (replaceRules !== view.replaceRules || JSON.stringify(entries) !== JSON.stringify(view.entries) || providersYaml !== view.providersYaml));
 	const inheritedDirty = $derived(!!view && JSON.stringify(entries.filter((e) => e.sourceIndex !== null)) !== JSON.stringify(view.entries.filter((e) => e.sourceIndex !== null)));
 	const filtered = $derived(entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => entry.rule.toLowerCase().includes(query.trim().toLowerCase())));
 	const pages = $derived(Math.max(1, Math.ceil(filtered.length / 100)));
@@ -63,6 +64,7 @@
 
 	function accept(next: RoutingView) {
 		view = next; entries = structuredClone(next.entries); providersYaml = next.providersYaml;
+		replaceRules = next.replaceRules;
 		error = ''; stale = false; ruleOpen = false; pasteOpen = false; providerOpen = false; page = 0;
 	}
 	async function load() {
@@ -89,7 +91,7 @@
 		if (!view?.profileId) return;
 		saving = true; error = '';
 		try {
-			accept(await backend.routingSave(view.profileId, view.revision, $state.snapshot(entries), providersYaml, unlocked));
+			accept(await backend.routingSave(view.profileId, view.revision, $state.snapshot(entries), providersYaml, unlocked, replaceRules));
 			toast.success(core.running ? 'Rules saved and applied' : 'Rules saved for the next core start');
 		} catch (e) { error = String(e); toast.error(e); }
 		finally { saving = false; }
@@ -117,6 +119,11 @@
 	}
 	function resetInherited() {
 		if (!view) return;
+		if (replaceRules) {
+			replaceRules = false;
+			entries = view.sourceRules.map((rule, sourceIndex) => ({ id: `source-${sourceIndex}`, sourceIndex, rule }));
+			return;
+		}
 		const custom = new Map<number, RoutingEntry[]>();
 		for (let i = 0; i < entries.length; i++) {
 			if (entries[i].sourceIndex !== null) continue;
@@ -170,8 +177,14 @@
 		<Field label="Allow editing inherited rules" description="Unlock to edit or remove subscription rules. Unlock also allows changing their order. Save inherited edits before locking again. This toggle starts locked each time you open this tab.">
 			<Switch label="Allow editing inherited rules" bind:checked={unlocked} disabled={saving || loading || (inheritedDirty && unlocked)} />
 		</Field>
-		{#if unlocked}<Button disabled={saving} onclick={resetInherited}><Undo2 size={14} /> Reset inherited rules</Button>{/if}
+		{#if replaceRules}
+			<p class="hint">This profile uses a saved rule list in place of the source rules.</p>
+			<Button disabled={saving} onclick={resetInherited}><Undo2 size={14} /> Use subscription rules</Button>
+		{:else if unlocked}
+			<Button disabled={saving} onclick={resetInherited}><Undo2 size={14} /> Reset inherited rules</Button>
+		{/if}
 		<p class="hint">First matching rule wins. Paste one rule per line, insert before or after any row, and use the arrows or position field to move rules. Positions refer to the full list, including search results on other pages. Rules after MATCH are usually unreachable. Proxied Apps rules are added separately according to that tab's ordering toggle.</p>
+		<p class="hint">To transfer these rules to another profile, duplicate this profile from the Profiles tab.</p>
 		{#if dirty}<p class="hint">Unsaved changes. Save & apply validates the complete config with the installed core.</p>{/if}
 	</Card>
 	<Card title={`Rules (${entries.length})`}>

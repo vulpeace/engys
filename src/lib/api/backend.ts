@@ -1,5 +1,5 @@
 // Typed wrappers around the Rust commands in src-tauri/src/commands.rs.
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 
 export type CoreStatus = {
 	running: boolean;
@@ -107,8 +107,11 @@ export type CustomGroupsView = {
 };
 
 export type RoutingEntry = { id: string; sourceIndex: number | null; rule: string };
+export type SourceRuleChoice = 'merge' | 'override' | 'subscription';
+export type PendingSubscriptionReview = { profileId: string; profileName: string; token: string };
 export type RoutingView = {
     profileId: string | null; profileName: string | null; sourceRules: string[]; entries: RoutingEntry[];
+    replaceRules: boolean;
     providersYaml: string; inheritedProvidersYaml: string; revision: string;
 };
 
@@ -135,8 +138,8 @@ export const backend = {
     androidRequestNotifications: () => invoke<void>('android_request_notifications'),
     androidVpnActive: () => invoke<boolean>('android_vpn_active'),
     routingGet: () => invoke<RoutingView>('routing_get'),
-    routingSave: (profileId: string, revision: string, entries: RoutingEntry[], providersYaml: string, editInherited: boolean) =>
-        invoke<RoutingView>('routing_save', { profileId, revision, entries, providersYaml, editInherited }),
+    routingSave: (profileId: string, revision: string, entries: RoutingEntry[], providersYaml: string, editInherited: boolean, replaceRules: boolean) =>
+        invoke<RoutingView>('routing_save', { profileId, revision, entries, providersYaml, editInherited, replaceRules }),
 	customGroupsGet: () => invoke<CustomGroupsView>('custom_groups_get'),
 	customGroupsSave: (profileId: string, groups: CustomProxyGroup[]) => invoke<CustomGroupsView>('custom_groups_save', { profileId, groups }),
 	clientMemory: () => invoke<number | null>('client_memory'),
@@ -164,12 +167,22 @@ export const backend = {
 		invoke<Profile>('profile_import_file', { path, name }),
 	profileAddRemote: (url: string, name?: string, updateIntervalMinutes = 0, intervalOverridden = false) =>
 		invoke<Profile>('profile_add_remote', { url, name, updateIntervalMinutes, intervalOverridden }),
-	profileUpdateRemote: (id: string) => invoke<Profile>('profile_update_remote', { id }),
+	profileUpdateRemote: (id: string, chooseRules: () => Promise<SourceRuleChoice | null>) => {
+		const prompt = new Channel<string>((token) => {
+			void chooseRules().then((choice) => invoke('profile_resolve_refresh', { token, choice })).catch(console.error);
+		});
+		return invoke<Profile | null>('profile_update_remote', { id, prompt });
+	},
+	pendingSubscriptionReviews: () => invoke<PendingSubscriptionReview[]>('pending_subscription_reviews'),
+	resolvePendingSubscription: (id: string, token: string, choice: SourceRuleChoice | null) =>
+		invoke<void>('resolve_pending_subscription', { id, token, choice }),
 	profileResetUpdateInterval: (id: string) => invoke<Profile>('profile_reset_update_interval', { id }),
 	profileSetUpdateInterval: (id: string, minutes: number) => invoke<Profile>('profile_set_update_interval', { id, minutes }),
 	profileRead: (id: string) => invoke<string>('profile_read', { id }),
 	profileReadFinal: (id: string) => invoke<string>('profile_read_final', { id }),
-	profileSave: (id: string, content: string) => invoke<void>('profile_save', { id, content }),
+	profileSave: (id: string, revision: string, content: string, ruleChoice: SourceRuleChoice | null = null) =>
+		invoke<boolean>('profile_save', { id, revision, content, ruleChoice }),
+	profileDuplicate: (id: string) => invoke<Profile>('profile_duplicate', { id }),
 	profileRename: (id: string, name: string) => invoke<Profile>('profile_rename', { id, name }),
 	profileDelete: (id: string) => invoke<void>('profile_delete', { id }),
 	profileActivate: (id: string) => invoke<void>('profile_activate', { id }),
