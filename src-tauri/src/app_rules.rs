@@ -680,12 +680,16 @@ mod persistence_tests {
         config.select_through_proxy_overrides.insert(kept.id.clone(), false);
         persist(&path, &config).unwrap();
 
-        std::fs::create_dir(path.with_extension("tmp")).unwrap();
+        let backup = path.with_extension("backup");
+        std::fs::rename(&path, &backup).unwrap();
+        std::fs::create_dir(&path).unwrap();
         assert!(profiles.delete(&removed.id, || config.remove_profile(&path, &removed.id)).is_err());
         assert_eq!(profiles.read_content(&removed.id).unwrap(), "rules: []");
         assert_eq!(ProfileStore::load(profile_dir.clone()).active().unwrap().id, removed.id);
+        assert_eq!(config.order_override(Some(&removed.id)), Some(true));
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::rename(&backup, &path).unwrap();
         assert_eq!(load(&path).unwrap().order_override(Some(&removed.id)), Some(true));
-        std::fs::remove_dir(path.with_extension("tmp")).unwrap();
 
         profiles.delete(&removed.id, || config.remove_profile(&path, &removed.id)).unwrap();
         let restored = load(&path).unwrap();

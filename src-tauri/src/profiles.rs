@@ -251,12 +251,17 @@ mod tests {
         store.update(&profile.id, |p| p.update_interval_minutes = 17).unwrap();
         assert_eq!(ProfileStore::load(dir.clone()).get(&profile.id).unwrap().update_interval_minutes, 17);
         // Prevent atomic index writes, while leaving profile YAML writable.
-        std::fs::create_dir(dir.join("index.tmp")).unwrap();
+        let index = dir.join("index.json");
+        let backup = dir.join("index.backup");
+        std::fs::rename(&index, &backup).unwrap();
+        std::fs::create_dir(&index).unwrap();
         assert!(store.replace_content(&profile.id, "rules: ['MATCH,REJECT']\n", |p| p.updated_at = 1).is_err());
         assert_eq!(store.read_content(&profile.id).unwrap(), "rules: []\n");
         assert_eq!(store.get(&profile.id).unwrap().updated_at, profile.updated_at);
         assert!(store.update(&profile.id, |p| p.update_interval_minutes = 0).is_err());
         assert_eq!(store.get(&profile.id).unwrap().update_interval_minutes, 17);
+        std::fs::remove_dir(&index).unwrap();
+        std::fs::rename(&backup, &index).unwrap();
         assert_eq!(ProfileStore::load(dir.clone()).get(&profile.id).unwrap().update_interval_minutes, 17);
         std::fs::remove_dir_all(dir).unwrap();
     }

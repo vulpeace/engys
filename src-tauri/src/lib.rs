@@ -101,6 +101,11 @@ pub fn run() {
         .setup(move |app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
+            #[cfg(target_os = "linux")]
+            {
+                util::ensure_private_dir(&config_dir)?;
+                util::ensure_private_dir(&data_dir)?;
+            }
             #[allow(unused_mut)]
             #[cfg(not(target_os = "android"))]
             let Some(mut instance) = instance::Instance::acquire(&config_dir, background, handoff, launch_link.as_deref())? else {
