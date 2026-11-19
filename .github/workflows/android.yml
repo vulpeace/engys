@@ -2,13 +2,14 @@ name: Android
 on:
   push:
     tags:
-      - '*'
+      - '**'
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build:
+    if: ${{ github.event.deleted != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,3 +47,4 @@ jobs:
         with:
           name: android-debug
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
