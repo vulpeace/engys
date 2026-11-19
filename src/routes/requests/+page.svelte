@@ -91,44 +91,50 @@
 </div>
 
 <Card padded={false} class="table-card">
-	<div class="row head">
-		<span>Time</span><span>Destination</span><span>Process</span><span>Rule</span><span>Chain</span>
-		<span class="r">↓</span><span class="r">↑</span><span class="r">Speed</span><span></span>
+	<div class="body">
+		<VirtualList
+			items={rows}
+			rowHeight={34}
+			key={(r) => r.conn.id}
+			minWidth="calc(766px + 8 * var(--space-3) + 2 * var(--space-4))"
+		>
+			{#snippet header()}
+				<div class="row head">
+					<span>Time</span><span>Destination</span><span>Process</span><span>Rule</span><span>Chain</span>
+					<span class="r">↓</span><span class="r">↑</span><span class="r">Speed</span><span></span>
+				</div>
+			{/snippet}
+			{#snippet empty()}
+				<EmptyState
+					title={source.length ? 'No matches' : 'No requests yet'}
+					description={core.running ? undefined : 'Start the core to see traffic.'}
+				/>
+			{/snippet}
+			{#snippet row(r: ConnRecord)}
+				{@const m = r.conn.metadata}
+				<div class="row" class:closed={r.closedAt} role="button" tabindex="0" onclick={() => openDetail(r)} onkeydown={(e) => e.key === 'Enter' && openDetail(r)}>
+					<span class="mono muted">{clockTime(r.conn.start)}</span>
+					<span class="ellipsis" title={target(r)}>
+						<Badge>{m.network}</Badge>
+						{target(r)}
+					</span>
+					<span class="ellipsis" title={m.processPath}>{m.process || '—'}</span>
+					<span class="ellipsis" title={rule(r)}>{rule(r)}</span>
+					<span class="ellipsis" title={chain(r)}>{chain(r)}</span>
+					<span class="r mono">{bytes(r.conn.download)}</span>
+					<span class="r mono">{bytes(r.conn.upload)}</span>
+					<span class="r mono muted">{r.closedAt ? '—' : speed(r.downSpeed + r.upSpeed)}</span>
+					<span class="r">
+						{#if !r.closedAt}
+							<button class="close" title="Close connection" onclick={(e) => { e.stopPropagation(); closeOne(r); }}>
+								<X size={14} />
+							</button>
+						{/if}
+					</span>
+				</div>
+			{/snippet}
+		</VirtualList>
 	</div>
-	{#if rows.length === 0}
-		<EmptyState
-			title={source.length ? 'No matches' : 'No requests yet'}
-			description={core.running ? undefined : 'Start the core to see traffic.'}
-		/>
-	{:else}
-		<div class="body">
-			<VirtualList items={rows} rowHeight={34} key={(r) => r.conn.id}>
-				{#snippet row(r: ConnRecord)}
-					{@const m = r.conn.metadata}
-					<div class="row" class:closed={r.closedAt} role="button" tabindex="0" onclick={() => openDetail(r)} onkeydown={(e) => e.key === 'Enter' && openDetail(r)}>
-						<span class="mono muted">{clockTime(r.conn.start)}</span>
-						<span class="ellipsis" title={target(r)}>
-							<Badge>{m.network}</Badge>
-							{target(r)}
-						</span>
-						<span class="ellipsis" title={m.processPath}>{m.process || '—'}</span>
-						<span class="ellipsis" title={rule(r)}>{rule(r)}</span>
-						<span class="ellipsis" title={chain(r)}>{chain(r)}</span>
-						<span class="r mono">{bytes(r.conn.download)}</span>
-						<span class="r mono">{bytes(r.conn.upload)}</span>
-						<span class="r mono muted">{r.closedAt ? '—' : speed(r.downSpeed + r.upSpeed)}</span>
-						<span class="r">
-							{#if !r.closedAt}
-								<button class="close" title="Close connection" onclick={(e) => { e.stopPropagation(); closeOne(r); }}>
-									<X size={14} />
-								</button>
-							{/if}
-						</span>
-					</div>
-				{/snippet}
-			</VirtualList>
-		</div>
-	{/if}
 </Card>
 
 <Dialog bind:open={detailOpen} title="Connection details" description={detail ? target(detail) : ''}>
@@ -153,6 +159,7 @@
 	:global(.table-card) {
 		flex: 1;
 		min-height: 320px;
+		overflow: hidden;
 	}
 	:global(.table-card > .body) {
 		display: flex;
