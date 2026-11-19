@@ -1,0 +1,82 @@
+name: Publish release
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve latest tag
+        id: tag
+        run: |
+          tag=$(git tag --sort=-version:refname | sed -n '1p')
+          if [[ -z "$tag" ]]; then
+            echo 'Push a Git tag before running this workflow.' >&2
+            exit 1
+          fi
+          commit=$(git rev-parse "refs/tags/$tag^{commit}")
+          printf 'name=%s\ncommit=%s\n' "$tag" "$commit" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: resolve-tag
+    uses: ./.github/workflows/linux.yml
+    with:
+      ref: ${{ needs.resolve-tag.outputs.commit }}
+
+  android:
+    needs: resolve-tag
+    uses: ./.github/workflows/android-release.yml
+    with:
+      ref: ${{ needs.resolve-tag.outputs.commit }}
+    secrets: inherit
+
+  publish:
+    needs: [resolve-tag, linux, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-appimage
+          path: release-assets/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: release-assets/android
+      - name: Publish AppImage and signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.resolve-tag.outputs.commit }}
+        run: |
+          shopt -s globstar nullglob
+          appimages=(release-assets/linux/**/*.AppImage)
+          apks=(release-assets/android/**/*-release.apk)
+          if (( ${#appimages[@]} == 0 || ${#apks[@]} == 0 )); then
+            echo 'Expected both an AppImage and a signed release APK.' >&2
+            exit 1
+          fi
+
+          git fetch --no-tags --depth=1 origin "refs/tags/$RELEASE_TAG"
+          if [[ $(git rev-parse 'FETCH_HEAD^{commit}') != "$RELEASE_COMMIT" ]]; then
+            echo 'The release tag moved after the builds started.' >&2
+            exit 1
+          fi
+
+          gh release create --verify-tag --generate-notes -- \
+            "$RELEASE_TAG" "${appimages[@]}" "${apks[@]}"
