@@ -25,8 +25,9 @@ The core binary is resolved in this order: **Settings → Core → mihomo binary
 `mihomo` on `PATH`.
 
 Settings → Core → Check / Download fetches the official release for this OS/CPU from
-`github.com/MetaCubeX/mihomo` (through the running core's proxy if it's up), checks the size and that the binary
-runs and reports the expected version, then swaps it in (stopping/restarting the core if needed). On Linux a
+`github.com/MetaCubeX/mihomo` (through the running core's proxy if it's up). The updater checks the archive's
+size and GitHub-provided SHA-256 digest before extraction, then checks that the binary runs and reports the
+expected version before swapping it in (stopping/restarting the core if needed). On Linux a
 replaced binary loses its TUN capabilities, so TUN permission must be granted again after each update.
 
 > Linux + NVIDIA/Wayland: if the window is blank, run with `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
@@ -93,7 +94,8 @@ one refresh, rather than repeated catch-up requests. Success schedules the next 
 last successful fetch; failure waits until the configured interval after the last attempt. Manual
 refresh remains available when automation is disabled and resets the schedule after success.
 
-Downloads must be mapping YAML and are validated with the installed mihomo parser when available.
+Subscription downloads are limited to 8 MiB. They must be mapping YAML and are validated with the installed
+mihomo parser when available.
 Refreshing the active profile reloads a running core, retaining app-routing rules and their inferred
 order; refreshing an inactive profile leaves the running core alone. Invalid downloads keep the old
 profile. Live reload failures restore the previous profile/runtime config and report rollback failures.

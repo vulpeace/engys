@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
+const MAX_SUBSCRIPTION_BYTES: usize = 8 * 1024 * 1024;
+
 /// Parsed `subscription-userinfo` header: traffic quota and expiry.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,10 +31,22 @@ pub async fn download(url: &str, user_agent: &str) -> Result<Downloaded> {
         .user_agent(user_agent)
         .timeout(Duration::from_secs(30))
         .build()?;
-    let resp = client.get(url).send().await.map_err(|e| Error::Http(e.without_url()))?
+    let mut resp = client.get(url).send().await.map_err(|e| Error::Http(e.without_url()))?
         .error_for_status().map_err(|e| Error::Http(e.without_url()))?;
     let headers = resp.headers().clone();
-    let content = resp.text().await.map_err(|e| Error::Http(e.without_url()))?;
+    let too_large = || Error::msg("Subscription download exceeds the 8 MiB limit.");
+    if resp.content_length().is_some_and(|size| size > MAX_SUBSCRIPTION_BYTES as u64) {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| Error::Http(e.without_url()))? {
+        if chunk.len() > MAX_SUBSCRIPTION_BYTES - bytes.len() {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let content = String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
 
     let info = headers
         .get("subscription-userinfo")
@@ -113,6 +127,37 @@ fn looks_like_base64(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_oversized_declared_and_chunked_subscriptions() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+
+        for chunked in [false, true] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let url = format!("http://{}/?token=private", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = BufReader::new(&mut socket);
+                let mut line = String::new();
+                while request.read_line(&mut line).unwrap() != 0 && line != "\r\n" {
+                    line.clear();
+                }
+                if chunked {
+                    socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap();
+                    let body = vec![b'a'; MAX_SUBSCRIPTION_BYTES + 1];
+                    write!(socket, "{:x}\r\n", body.len()).unwrap();
+                    socket.write_all(&body).unwrap();
+                    let _ = socket.write_all(b"\r\n0\r\n\r\n");
+                } else {
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", MAX_SUBSCRIPTION_BYTES + 1).unwrap();
+                }
+            });
+            let error = tauri::async_runtime::block_on(download(&url, "test")).err().unwrap();
+            server.join().unwrap();
+            assert_eq!(error.to_string(), "Subscription download exceeds the 8 MiB limit.");
+        }
+    }
 
     #[test]
     fn userinfo() {

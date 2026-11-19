@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -17,6 +18,8 @@ use crate::error::{Error, Result};
 use crate::AppState;
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest";
+const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_BINARY_BYTES: u64 = 128 * 1024 * 1024;
 pub const EVENT_PROGRESS: &str = "core-update-progress";
 
 #[derive(Deserialize)]
@@ -30,6 +33,16 @@ struct Asset {
     name: String,
     browser_download_url: String,
     size: u64,
+    digest: Option<String>,
+}
+
+impl Asset {
+    fn expected_sha256(&self) -> Result<&str> {
+        self.digest.as_deref()
+            .and_then(|digest| digest.strip_prefix("sha256:"))
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| Error::msg("GitHub did not provide a valid SHA-256 digest for this core release asset"))
+    }
 }
 
 #[derive(Serialize)]
@@ -143,6 +156,7 @@ async fn core_proxy_port(app: &AppHandle) -> Option<u16> {
 async fn client(app: &AppHandle) -> Result<reqwest::Client> {
     let mut b = reqwest::Client::builder()
         .user_agent("mihomo-client")
+        .https_only(true)
         .connect_timeout(Duration::from_secs(15));
     if let Some(port) = core_proxy_port(app).await {
         b = b.proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}"))?);
@@ -194,7 +208,9 @@ pub async fn check(app: AppHandle) -> Result<UpdateInfo> {
 fn extract(name: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     if name.ends_with(".gz") {
-        flate2::read::GzDecoder::new(data).read_to_end(&mut out)?;
+        flate2::read::GzDecoder::new(data)
+            .take(MAX_BINARY_BYTES + 1)
+            .read_to_end(&mut out)?;
     } else if name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data))
             .map_err(|e| Error::msg(format!("Bad zip: {e}")))?;
@@ -203,11 +219,23 @@ fn extract(name: &str, data: &[u8]) -> Result<Vec<u8>> {
             .ok_or_else(|| Error::msg("No .exe in the release archive"))?;
         zip.by_index(idx)
             .map_err(|e| Error::msg(e.to_string()))?
+            .take(MAX_BINARY_BYTES + 1)
             .read_to_end(&mut out)?;
     } else {
         return Err(Error::msg(format!("Unknown archive type: {name}")));
     }
+    if out.len() as u64 > MAX_BINARY_BYTES {
+        return Err(Error::msg("Extracted core exceeds the 128 MiB limit"));
+    }
     Ok(out)
+}
+
+fn verify_archive(data: &[u8], expected_sha256: &str) -> Result<()> {
+    let actual = format!("{:x}", Sha256::digest(data));
+    if !actual.eq_ignore_ascii_case(expected_sha256) {
+        return Err(Error::msg("Downloaded core archive does not match GitHub's SHA-256 digest"));
+    }
+    Ok(())
 }
 
 /// Download the latest release into the managed location. If the core is
@@ -217,8 +245,11 @@ pub async fn install(app: AppHandle) -> Result<String> {
     let _operation = state.core_operation.lock().await;
     let release = latest_release(&app).await?;
     let asset = pick_asset(&release)?;
-    let dir = managed_dir(&app);
-    std::fs::create_dir_all(&dir)?;
+    let expected_sha256 = asset.expected_sha256()?;
+    let total = asset.size;
+    if total == 0 || total > MAX_ARCHIVE_BYTES {
+        return Err(Error::msg("Core release archive size must be between 1 byte and 64 MiB"));
+    }
 
     // Download with progress events.
     let mut resp = client(&app).await?
@@ -227,10 +258,15 @@ pub async fn install(app: AppHandle) -> Result<String> {
         .send()
         .await?
         .error_for_status()?;
-    let total = resp.content_length().unwrap_or(asset.size);
+    if resp.content_length().is_some_and(|length| length != total) {
+        return Err(Error::msg("Core archive response length differs from the GitHub release size"));
+    }
     let mut data = Vec::with_capacity(total as usize);
     let mut last_emit = 0u64;
     while let Some(chunk) = resp.chunk().await? {
+        if chunk.len() > total as usize - data.len() {
+            return Err(Error::msg("Core archive exceeded the GitHub release size"));
+        }
         data.extend_from_slice(&chunk);
         let n = data.len() as u64;
         if n - last_emit > 256 * 1024 || n == total {
@@ -246,11 +282,13 @@ pub async fn install(app: AppHandle) -> Result<String> {
         )));
     }
 
-    // Extract to a temp file and make sure it runs and is the version we asked for.
+    verify_archive(&data, expected_sha256)?;
+    // Only verified archives can supply the executable used for the version check.
     let binary = extract(&asset.name, &data)?;
+    let dir = managed_dir(&app);
     let target = managed_binary(&dir);
     let tmp = dir.join(if cfg!(windows) { "mihomo.new.exe" } else { "mihomo.new" });
-    std::fs::write(&tmp, &binary)?;
+    crate::util::write_atomic(&tmp, &binary)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -366,6 +404,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn requires_a_valid_digest_and_rejects_equal_size_tampering() {
+        let mut asset: Asset = serde_json::from_value(serde_json::json!({
+            "name": "mihomo.gz", "browser_download_url": "", "size": 3
+        })).unwrap();
+        assert!(asset.expected_sha256().is_err());
+        asset.digest = Some("sha256:invalid".into());
+        assert!(asset.expected_sha256().is_err());
+        asset.digest = Some("sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into());
+        let expected = asset.expected_sha256().unwrap();
+        assert!(verify_archive(b"abc", expected).is_ok());
+        assert!(verify_archive(b"abd", expected).is_err());
+    }
+
+    #[test]
     fn binary_swap_preserves_previous_and_can_restore_it() {
         let dir = std::env::temp_dir().join(format!("core-swap-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -406,7 +458,7 @@ mod tests {
 
     #[test]
     fn picks_exact_asset() {
-        let mk = |n: &str| Asset { name: n.into(), browser_download_url: String::new(), size: 1 };
+        let mk = |n: &str| Asset { name: n.into(), browser_download_url: String::new(), size: 1, digest: None };
         let tag = "v1.19.34";
         let prefix = asset_prefix().unwrap();
         let ext = if cfg!(windows) { ".zip" } else { ".gz" };
