@@ -191,8 +191,12 @@ impl ProfileStore {
 
     pub fn set_active(&mut self, id: &str) -> Result<()> {
         self.get(id)?;
-        self.index.active = Some(id.to_string());
-        self.save_index()
+        let previous = self.index.active.replace(id.to_string());
+        if let Err(error) = self.save_index() {
+            self.index.active = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
@@ -228,6 +232,31 @@ pub fn name_from_path(p: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_activation_preserves_the_active_profile() {
+        let dir = std::env::temp_dir().join(format!("mihomo-profile-test-{}", uuid::Uuid::new_v4()));
+        let mut store = ProfileStore::load(dir.clone());
+        let first = store
+            .add(new_profile("First".into(), ProfileKind::Inline, None), "rules: []\n")
+            .unwrap();
+        let second = store
+            .add(new_profile("Second".into(), ProfileKind::Inline, None), "rules: []\n")
+            .unwrap();
+        let index = dir.join("index.json");
+        let backup = dir.join("index.backup");
+        std::fs::rename(&index, &backup).unwrap();
+        std::fs::create_dir(&index).unwrap();
+
+        let result = store.set_active(&second.id);
+        let active = store.active().unwrap().id.clone();
+        std::fs::remove_dir(&index).unwrap();
+        std::fs::rename(&backup, &index).unwrap();
+        assert_eq!(ProfileStore::load(dir.clone()).active().unwrap().id, first.id);
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(result.is_err());
+        assert_eq!(active, first.id);
+    }
 
     #[test]
     fn old_profiles_remain_manual_only_despite_provider_interval_hints() {
