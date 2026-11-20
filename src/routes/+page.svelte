@@ -1,16 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
-	import { ArrowDown, ArrowUp, Cable, Play, Square } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, Cable, Play, RefreshCw, Square } from '@lucide/svelte';
+	import { parse } from 'yaml';
 	import { Badge, Button, Card, PageHeader, Select, StatTile, toast } from '#lib/ui/index.ts';
 	import MemoryUsage from '#lib/components/MemoryUsage.svelte';
 	import CoreUpdate from '#lib/components/CoreUpdate.svelte';
 	import BandwidthChart from '#lib/components/BandwidthChart.svelte';
 	import ProfileActions from '#lib/components/ProfileActions.svelte';
+	import SourceRuleChoiceDialog from '#lib/components/SourceRuleChoiceDialog.svelte';
 	import TunControl from '#lib/components/TunControl.svelte';
 	import { core } from '#lib/stores/core.svelte.ts';
 	import { live } from '#lib/stores/live.svelte.ts';
-	import { backend, type ProfileIndex } from '#lib/api/backend.ts';
+	import { backend, type Profile, type ProfileIndex, type SourceRuleChoice } from '#lib/api/backend.ts';
 	import { bytes, duration, speed } from '#lib/format.ts';
 
 	let profiles = $state<ProfileIndex | null>(null);
@@ -20,6 +22,63 @@
 
 	let switchingProfile = $state(false);
 	let selectedProfile = $state('');
+	let updatingSubscription = $state(false);
+	let pendingChoice = $state.raw<{ name: string; resolve: (choice: SourceRuleChoice | null) => void }>();
+	let mounted = false;
+
+	const selected = $derived(profiles?.profiles.find((p) => p.id === selectedProfile));
+	const canUpdateSubscription = $derived(
+		selected?.kind === 'remote' || (selected ? hasRemoteProvider(selected.id) : false)
+	);
+	const providerApi = $derived(core.status?.profileId === selectedProfile ? core.api : null);
+
+	async function hasRemoteProvider(id: string) {
+		try {
+			const config = parse(await backend.profileRead(id), { merge: true });
+			return Object.values(config?.['proxy-providers'] ?? {}).some(
+				(provider) => (provider as { type?: string } | null)?.type === 'http'
+			);
+		} catch (e) {
+			console.error('Could not inspect proxy providers', e);
+			return false;
+		}
+	}
+
+	function finishChoice(choice: SourceRuleChoice | null) {
+		const pending = pendingChoice;
+		pendingChoice = undefined;
+		pending?.resolve(choice);
+	}
+
+	async function updateSubscription(profile: Profile) {
+		if (updatingSubscription || switchingProfile || core.busy) return;
+		updatingSubscription = true;
+		try {
+			if (profile.kind === 'remote') {
+				const updated = await backend.profileUpdateRemote(profile.id, () => {
+					if (!mounted) return Promise.resolve(null);
+					return new Promise((resolve) => { pendingChoice = { name: profile.name, resolve }; });
+				});
+				if (!updated) return;
+			} else {
+				const api = providerApi;
+				if (!api) return;
+				const { providers } = await api.providers();
+				const remote = Object.values(providers).filter((provider) => provider.vehicleType === 'HTTP');
+				if (!remote.length) throw new Error('No HTTP proxy providers are loaded for this profile.');
+				const results = await Promise.allSettled(remote.map((provider) => api.updateProvider(provider.name)));
+				const failures = results.flatMap((result, i) =>
+					result.status === 'rejected' ? [`${remote[i].name}: ${result.reason}`] : []
+				);
+				if (failures.length) throw new Error(failures.join('\n'));
+			}
+			toast.success(`Updated ${profile.name}`);
+		} catch (e) {
+			toast.error(e);
+		} finally {
+			updatingSubscription = false;
+		}
+	}
 
 	async function refreshProfiles() {
 		profiles = await backend.profilesList();
@@ -27,12 +86,17 @@
 	}
 
 	onMount(() => {
+		mounted = true;
 		const unlisten = listen<ProfileIndex>('profiles-changed', (event) => {
 			profiles = event.payload;
 			selectedProfile = profiles.active ?? '';
 		}).catch(toast.error);
 		void refreshProfiles().catch(toast.error);
-		return () => { void unlisten.then((stop) => stop?.()); };
+		return () => {
+			mounted = false;
+			finishChoice(null);
+			void unlisten.then((stop) => stop?.());
+		};
 	});
 
 	async function selectProfile(id: string) {
@@ -97,17 +161,30 @@
 {#if profiles && !needsProfile}
 <PageHeader title="Dashboard" subtitle={activeProfile ? `Profile: ${activeProfile.name}` : 'No profile selected'}>
 	{#snippet actions()}
-		<Select label="Active profile" bind:value={selectedProfile}
-			options={profiles?.profiles.map((p) => ({ value: p.id, label: p.name })) ?? []}
-			placeholder={profiles === null ? 'Loading profiles…' : 'No profiles available'}
-			disabled={switchingProfile || core.busy || !profiles?.profiles.length}
-			onValueChange={selectProfile} />
+		<div class="profile-actions">
+			<Select label="Active profile" bind:value={selectedProfile}
+				options={profiles?.profiles.map((p) => ({ value: p.id, label: p.name })) ?? []}
+				placeholder={profiles === null ? 'Loading profiles…' : 'No profiles available'}
+				disabled={switchingProfile || updatingSubscription || core.busy || !profiles?.profiles.length}
+				onValueChange={selectProfile} />
+			{#await canUpdateSubscription then canUpdate}
+				{#if canUpdate && selected}
+					<Button icon aria-label="Update subscription"
+						title={selected.kind === 'remote' || providerApi ? 'Update subscription' : 'Start the core to update proxy providers'}
+						loading={updatingSubscription}
+						disabled={switchingProfile || core.busy || (selected.kind !== 'remote' && !providerApi)}
+						onclick={() => updateSubscription(selected)}>
+						<RefreshCw size={16} />
+					</Button>
+				{/if}
+			{/await}
+		</div>
 		{#if core.running}
 			<Badge tone="success">Running · {uptime}</Badge>
 		{:else}
 			<Badge>Stopped</Badge>
 		{/if}
-		<Button variant={core.running ? 'secondary' : 'primary'} loading={core.busy} disabled={switchingProfile || (needsCore && !core.running)} onclick={() => toggle(!core.running)}>
+		<Button variant={core.running ? 'secondary' : 'primary'} loading={core.busy} disabled={switchingProfile || updatingSubscription || (needsCore && !core.running)} onclick={() => toggle(!core.running)}>
 			{#if core.running}<Square size={14} /> Stop{:else}<Play size={14} /> Start{/if}
 		</Button>
 	{/snippet}
@@ -115,6 +192,8 @@
 {:else}
 	<PageHeader title="Dashboard" />
 {/if}
+
+<SourceRuleChoiceDialog name={pendingChoice?.name} onchoice={finishChoice} />
 
 {#if needsCore || needsProfile}
 	<div class="setup-grid">
@@ -193,6 +272,11 @@
 {/if}
 
 <style>
+	.profile-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
 	.setup-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
