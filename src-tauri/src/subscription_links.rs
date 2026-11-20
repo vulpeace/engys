@@ -16,6 +16,7 @@ pub fn is_link(value: &str) -> bool {
 #[derive(Default)]
 pub struct SubscriptionLinks {
     pending: Mutex<Vec<String>>,
+    pub(crate) import: tokio::sync::Mutex<()>,
     #[cfg(target_os = "android")]
     read_initial: std::sync::atomic::AtomicBool,
 }
@@ -34,7 +35,7 @@ pub fn enqueue(app: &AppHandle, link: String) {
 }
 
 #[tauri::command]
-pub async fn take_subscription_links(app: AppHandle) -> Vec<String> {
+pub async fn pending_subscription_link(app: AppHandle) -> Option<String> {
     let links = app.state::<SubscriptionLinks>();
     #[cfg(target_os = "android")]
     if !links
@@ -47,6 +48,28 @@ pub async fn take_subscription_links(app: AppHandle) -> Vec<String> {
             }
         }
     }
-    let pending = std::mem::take(&mut *links.pending.lock().unwrap());
-    pending
+    let next = links.pending.lock().unwrap().first().cloned();
+    next
+}
+
+impl SubscriptionLinks {
+    pub(crate) fn is_next(&self, link: &str) -> bool {
+        self.pending.lock().unwrap().first().is_some_and(|next| next == link)
+    }
+
+    pub(crate) fn complete(&self, app: &AppHandle, link: &str) {
+        let mut pending = self.pending.lock().unwrap();
+        if pending.first().is_some_and(|next| next == link) {
+            pending.remove(0);
+            drop(pending);
+            let _ = app.emit("subscription-links-pending", ());
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn dismiss_subscription_link(app: AppHandle, link: String) {
+    let links = app.state::<SubscriptionLinks>();
+    let _guard = links.import.lock().await;
+    links.complete(&app, &link);
 }

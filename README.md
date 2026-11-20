@@ -247,10 +247,12 @@ missing targets are reported. Windows routing and live reload still need platfor
 
 Enable **Settings → Startup & tray → Start at login**. The change applies immediately, independently of
 Settings Save/Revert. Login launches create the window hidden and expose an **Open** / **Quit** tray
-menu with core status. Launching the app again reveals the existing window. Enable **Close to tray**
-under **Settings → Startup & tray** and click Save to hide the window when closed while
-keeping the core running. This option defaults to off. Choose **Quit** in the tray to exit and stop the
-core. With the option off, closing the window exits the app normally.
+menu with core status. Enable **Close to tray** under **Settings → Startup & tray** and click Save
+to keep the core running after closing the window. On Linux, this also releases the WebView.
+Opening the app from the tray or launching it again recreates the window and starts a fresh UI
+session, resetting the in-memory Requests history. On Windows, the window is hidden and restored.
+This option defaults to off. Choose **Quit** in the tray to exit and stop the core. With the option
+off, closing the window exits the app normally.
 
 The app remembers whether the core was running, and restores that state on the next launch (including
 manual launches). Explicit Stop records stopped; exit cleanup and temporary stops for updates or

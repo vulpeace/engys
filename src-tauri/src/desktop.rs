@@ -10,6 +10,26 @@ struct TrayState {
 pub fn show(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
+        #[cfg(target_os = "linux")]
+        if handle.get_webview_window("main").is_none() {
+            let Some(config) = handle
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|config| config.label == "main")
+            else {
+                log::error!("Missing main window configuration");
+                return;
+            };
+            if let Err(error) = tauri::WebviewWindowBuilder::from_config(&handle, config)
+                .and_then(|builder| builder.build())
+            {
+                log::error!("Could not reopen the main window: {error}");
+                return;
+            }
+            restore_geometry(&handle);
+        }
         if let Some(window) = handle.get_webview_window("main") {
             let _ = window.unminimize();
             let _ = window.show();
@@ -101,6 +121,14 @@ fn restore_geometry(app: &AppHandle) {
     }
 }
 
+pub fn close_to_tray(app: &AppHandle) -> bool {
+    app.try_state::<AppState>().is_some_and(|state| {
+        state.settings.lock().unwrap().minimize_to_tray
+            && !state.exiting.load(std::sync::atomic::Ordering::SeqCst)
+            && app.tray_by_id("main").is_some()
+    })
+}
+
 pub fn window_event(window: &tauri::Window, event: &WindowEvent) {
     if window.label() != "main"
         || !matches!(
@@ -113,13 +141,11 @@ pub fn window_event(window: &tauri::Window, event: &WindowEvent) {
     let Some(state) = window.app_handle().try_state::<AppState>() else {
         return;
     };
-    // Capture visibility before handling close so we only save visible window geometry.
+    // Capture visibility before a platform hides or closes the window.
     let save_geometry = !window.is_minimized().unwrap_or(false) && window.is_visible().unwrap_or(false);
+    #[cfg(not(target_os = "linux"))]
     if let WindowEvent::CloseRequested { api, .. } = event {
-        let close_to_tray = state.settings.lock().unwrap().minimize_to_tray
-            && !state.exiting.load(std::sync::atomic::Ordering::SeqCst)
-            && window.app_handle().tray_by_id("main").is_some();
-        if close_to_tray {
+        if close_to_tray(window.app_handle()) {
             api.prevent_close();
             if let Err(error) = window.hide() {
                 log::warn!("Could not close to tray: {error}");

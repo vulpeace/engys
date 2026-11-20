@@ -29,7 +29,7 @@ pub struct Settings {
     pub request_history_limit: u32,
     pub subscription_user_agent: String,
     pub theme: String,
-    /// Hide the main window on minimize/close; tray Quit still exits.
+    /// Keep the app running in the tray when the main window closes.
     pub minimize_to_tray: bool,
     pub tun: TunSettings,
 }

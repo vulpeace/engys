@@ -174,8 +174,8 @@ export const backend = {
 		invoke<Profile>('profile_create_inline', { name, content }),
 	profileImportFile: (path: string, name?: string) =>
 		invoke<Profile>('profile_import_file', { path, name }),
-	profileAddRemote: (url: string, name?: string, updateIntervalMinutes = 0, intervalOverridden = false) =>
-		invoke<Profile>('profile_add_remote', { url, name, updateIntervalMinutes, intervalOverridden }),
+	profileAddRemote: (url: string, name?: string, updateIntervalMinutes = 0, intervalOverridden = false, subscriptionLink?: string) =>
+		invoke<Profile>('profile_add_remote', { url, name, updateIntervalMinutes, intervalOverridden, subscriptionLink }),
 	profileUpdateRemote: (id: string, chooseRules: () => Promise<SourceRuleChoice | null>) => {
 		const prompt = new Channel<string>((token) => {
 			void chooseRules().then((choice) => invoke('profile_resolve_refresh', { token, choice })).catch(console.error);

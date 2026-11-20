@@ -129,7 +129,17 @@ pub async fn profile_import_file(state: State<'_, AppState>, path: String, name:
 }
 
 #[tauri::command]
-pub async fn profile_add_remote(app: AppHandle, state: State<'_, AppState>, url: String, name: Option<String>, update_interval_minutes: Option<u32>, interval_overridden: Option<bool>) -> Result<Profile> {
+pub async fn profile_add_remote(app: AppHandle, state: State<'_, AppState>, url: String, name: Option<String>, update_interval_minutes: Option<u32>, interval_overridden: Option<bool>, subscription_link: Option<String>) -> Result<Profile> {
+    let links = app.state::<crate::subscription_links::SubscriptionLinks>();
+    let _import = if let Some(link) = &subscription_link {
+        let guard = links.import.lock().await;
+        if !links.is_next(link) {
+            return Err(crate::error::Error::msg("Subscription link is no longer pending"));
+        }
+        Some(guard)
+    } else {
+        None
+    };
     let ua = state.settings.lock().unwrap().subscription_user_agent.clone();
     let d = subscription::download(url.trim(), &ua).await?;
     let name = name
@@ -145,6 +155,9 @@ pub async fn profile_add_remote(app: AppHandle, state: State<'_, AppState>, url:
     }
     p.last_refreshed_at = Some(now_secs());
     let profile = state.profiles.lock().unwrap().add(p, &d.content)?;
+    if let Some(link) = subscription_link {
+        links.complete(&app, &link);
+    }
     crate::subscription_refresh::emit_profiles(&app);
     Ok(profile)
 }

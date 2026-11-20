@@ -6,9 +6,7 @@
 	import { parseSubscriptionLink, type SubscriptionLink } from '#lib/subscription-link.ts';
 	import { Button, Dialog, toast } from '#lib/ui/index.ts';
 
-	let pending = $state<SubscriptionLink[]>([]);
-	let current = $state<SubscriptionLink>();
-	let open = $state(false);
+	let current = $state.raw<{ raw: string; link: SubscriptionLink }>();
 	let busy = $state(false);
 
 	onMount(() => {
@@ -24,15 +22,19 @@
 			try {
 				while (collectAgain && !disposed) {
 					collectAgain = false;
-					const links = await invoke<string[]>('take_subscription_links');
+					const raw = await invoke<string | null>('pending_subscription_link');
 					if (disposed) return;
-					for (const link of links) {
+					if (!raw) {
+						current = undefined;
+					} else if (current?.raw !== raw) {
 						try {
-							pending.push(parseSubscriptionLink(link));
+							current = { raw, link: parseSubscriptionLink(raw) };
 						} catch (error) {
 							toast.error(error instanceof URIError || error instanceof TypeError
 								? 'Invalid subscription link.'
 								: error);
+							await invoke('dismiss_subscription_link', { link: raw });
+							collectAgain = true;
 						}
 					}
 				}
@@ -57,18 +59,24 @@
 		};
 	});
 
-	$effect(() => {
-		if (!open && !busy && pending.length) {
-			current = pending.shift();
-			open = current !== undefined;
-		}
-	});
-
-	async function download(link: SubscriptionLink) {
+	async function dismiss(open: boolean) {
+		if (open || busy || !current) return;
 		busy = true;
 		try {
-			await backend.profileAddRemote(link.url, link.name, link.refresh, link.refresh !== undefined);
-			open = false;
+			await invoke('dismiss_subscription_link', { link: current.raw });
+		} catch (error) {
+			toast.error(error);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function download() {
+		if (busy || !current) return;
+		const { raw, link } = current;
+		busy = true;
+		try {
+			await backend.profileAddRemote(link.url, link.name, link.refresh, link.refresh !== undefined, raw);
 			toast.success('Profile added');
 		} catch (error) {
 			toast.error(error);
@@ -78,22 +86,22 @@
 	}
 </script>
 
-<Dialog bind:open title="Import subscription" description="Review the subscription before downloading it.">
+<Dialog bind:open={() => current !== undefined, dismiss} title="Import subscription" description="Review the subscription before downloading it.">
 	{#if current}
 		<dl>
 			<dt>Subscription URL</dt>
-			<dd class="selectable">{current.url}</dd>
-			{#if current.name}
+			<dd class="selectable">{current.link.url}</dd>
+			{#if current.link.name}
 				<dt>Name</dt>
-				<dd>{current.name}</dd>
+				<dd>{current.link.name}</dd>
 			{/if}
 			<dt>Update interval</dt>
-			<dd>{current.refresh === undefined ? 'Default' : current.refresh === 0 ? 'Disabled' : `${current.refresh} min`}</dd>
+			<dd>{current.link.refresh === undefined ? 'Default' : current.link.refresh === 0 ? 'Disabled' : `${current.link.refresh} min`}</dd>
 		</dl>
 	{/if}
 	{#snippet footer()}
-		<Button disabled={busy} onclick={() => open = false}>Cancel</Button>
-		<Button variant="primary" loading={busy} onclick={() => current && download(current)}>Download</Button>
+		<Button disabled={busy} onclick={() => dismiss(false)}>Cancel</Button>
+		<Button variant="primary" loading={busy} onclick={download}>Download</Button>
 	{/snippet}
 </Dialog>
 

@@ -240,7 +240,8 @@ pub fn run() {
             commands::profile_create_inline,
             commands::profile_import_file,
             commands::profile_add_remote,
-            subscription_links::take_subscription_links,
+            subscription_links::pending_subscription_link,
+            subscription_links::dismiss_subscription_link,
             commands::profile_update_remote,
             commands::profile_resolve_refresh,
             commands::pending_subscription_reviews,
@@ -280,6 +281,13 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_handle, _event| {
+        // Closing the last window can leave the tray and core running.
+        #[cfg(target_os = "linux")]
+        if let RunEvent::ExitRequested { code: None, api, .. } = &_event {
+            if desktop::close_to_tray(_handle) {
+                api.prevent_exit();
+            }
+        }
         // Never leave an orphaned core behind.
         #[cfg(not(target_os = "android"))]
         if let RunEvent::Exit = _event {
