@@ -33,9 +33,10 @@ Download the packages from the workflow run's artifacts. Pull requests run the f
 checks. Run **Android debug** manually to get debug APKs without signing secrets, or run
 **Build packages** manually to build release packages for all platforms or just one.
 
-Run **Android release** to produce signed APK and AAB artifacts. Run **Publish release** to build the
-latest version-sorted tag and attach the AppImage, signed Android APKs and `engys.exe` to
-its GitHub release. All signed builds use the [Android signing secrets](docs/android.md#github-actions).
+Run **Android release** to produce signed APK and AAB artifacts. Run **Publish release** to reuse the
+AppImage, signed Android APKs and `engys.exe` from the latest successful tag-triggered **Build packages**
+run and publish them to that tag's GitHub release. All signed builds use the
+[Android signing secrets](docs/android.md#github-actions).
 
 The core binary is resolved in this order: **Settings → Core → mihomo binary** (explicit path) → the
 **app-managed core** in `<data>/core-bin/` → a `mihomo` file next to the app executable (bundled sidecar) →

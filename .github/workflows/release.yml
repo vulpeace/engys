@@ -2,65 +2,56 @@ name: Publish release
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
   group: publish-release
   cancel-in-progress: false
 
 jobs:
-  resolve-tag:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.tag.outputs.name }}
-      commit: ${{ steps.tag.outputs.commit }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Resolve latest tag
-        id: tag
-        run: |
-          tag=$(git tag --sort=-version:refname | sed -n '1p')
-          if [[ -z "$tag" ]]; then
-            echo 'Push a Git tag before running this workflow.' >&2
-            exit 1
-          fi
-          commit=$(git rev-parse "refs/tags/$tag^{commit}")
-          printf 'name=%s\ncommit=%s\n' "$tag" "$commit" >> "$GITHUB_OUTPUT"
-
-  build:
-    needs: resolve-tag
-    uses: ./.github/workflows/build.yml
-    with:
-      ref: ${{ needs.resolve-tag.outputs.commit }}
-    secrets: inherit
-
   publish:
-    needs: [resolve-tag, build]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Find latest successful tag build
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          build=$(gh run list --workflow build.yml --event push --status success --limit 1 \
+            --json databaseId,headBranch,headSha,url \
+            --jq '.[] | [.databaseId, .headBranch, .headSha, .url] | @tsv')
+          if [[ -z "$build" ]]; then
+            echo 'No successful tag-triggered build.yml run was found.' >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r run_id tag commit url <<< "$build"
+          echo "Using build $url for tag $tag."
+          printf 'run_id=%s\ntag=%s\ncommit=%s\n' "$run_id" "$tag" "$commit" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.build.outputs.run_id }}
           name: linux-appimage
           path: release-assets/linux
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.build.outputs.run_id }}
           name: android-release
           path: release-assets/android
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.build.outputs.run_id }}
           name: windows-x64
           path: release-assets/windows
       - name: Publish AppImage, signed APKs and Windows executable
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.resolve-tag.outputs.tag }}
-          RELEASE_COMMIT: ${{ needs.resolve-tag.outputs.commit }}
+          RELEASE_TAG: ${{ steps.build.outputs.tag }}
+          RELEASE_COMMIT: ${{ steps.build.outputs.commit }}
         run: |
           shopt -s globstar nullglob
           appimages=(release-assets/linux/**/*.AppImage)
@@ -73,7 +64,7 @@ jobs:
 
           git fetch --no-tags --depth=1 origin "refs/tags/$RELEASE_TAG"
           if [[ $(git rev-parse 'FETCH_HEAD^{commit}') != "$RELEASE_COMMIT" ]]; then
-            echo 'The release tag moved after the builds started.' >&2
+            echo 'The release tag no longer points to the commit used by the build.' >&2
             exit 1
           fi
 
