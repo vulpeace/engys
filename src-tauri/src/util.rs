@@ -40,12 +40,26 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
 #[cfg(target_os = "linux")]
 pub fn ensure_private_dir(path: &Path) -> Result<()> {
     use std::fs::{self, DirBuilder, Permissions};
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 
     DirBuilder::new().recursive(true).mode(0o700).create(path)?;
-    let metadata = fs::metadata(path)?;
-    if metadata.permissions().mode() & 0o077 != 0 {
-        fs::set_permissions(path, Permissions::from_mode(0o700))?;
+    let symlink = fs::symlink_metadata(path)?.is_symlink();
+    let flags = libc::O_DIRECTORY | if symlink { 0 } else { libc::O_NOFOLLOW };
+    let directory = OpenOptions::new().read(true).custom_flags(flags).open(path)?;
+    let metadata = directory.metadata()?;
+    let shared = metadata.permissions().mode() & 0o077 != 0;
+    // SAFETY: geteuid takes no arguments and returns the process's effective user ID.
+    let owned = metadata.uid() == unsafe { libc::geteuid() };
+    if !owned || (symlink && shared) {
+        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        return Err(crate::error::Error::msg(format!(
+            "App directory {} must point to a directory owned by the current user with mode 0700. Resolved path: {}",
+            path.display(),
+            target.display()
+        )));
+    }
+    if shared {
+        directory.set_permissions(Permissions::from_mode(0o700))?;
     }
     Ok(())
 }
@@ -93,5 +107,30 @@ mod tests {
         );
         assert_eq!(fs::read(&path).unwrap(), b"existing");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn private_directory_preserves_symlink_target_permissions() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        ensure_private_dir(&dir).unwrap();
+        let target = dir.join("shared");
+        let link = dir.join("app-data");
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+        symlink(&target, &link).unwrap();
+
+        let outcome = ensure_private_dir(&link);
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+        let private_outcome = ensure_private_dir(&link);
+        fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(mode, 0o750);
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains(&target.display().to_string()), "{error}");
+        private_outcome.unwrap();
     }
 }
