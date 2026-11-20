@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { listen } from '@tauri-apps/api/event';
 	import { ChevronDown, ChevronRight, Gauge, RefreshCw, Pin, PinOff, HeartPulse, Download, Undo2, Plus, Pencil, Trash2 } from '@lucide/svelte';
-	import { Badge, Button, Card, EmptyState, Meter, PageHeader, Segmented, toast } from '#lib/ui/index.ts';
+	import { Badge, Button, Card, EmptyState, Meter, PageHeader, Segmented, Select, toast } from '#lib/ui/index.ts';
 	import CustomGroupEditor, { type EditorActions } from '#lib/components/CustomGroupEditor.svelte';
-	import type { CustomGroupsView } from '#lib/api/backend.ts';
+	import { backend, type CustomGroupsView, type StartupProxies } from '#lib/api/backend.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
 	import type { Proxy, ProxyProvider } from '#lib/api/mihomo.ts';
 	import { bytes, latencyTone, timeAgo } from '#lib/format.ts';
@@ -13,6 +15,51 @@
 	let groupEditor = $state<EditorActions | null>(null);
 	let groupContext = $state<CustomGroupsView | null>(null);
 	let savingGroups = $state(false);
+	let startup = $state.raw<StartupProxies | null>(null);
+	let startupBusy = $state(false);
+	let startupRequest = 0;
+	const pendingCount = $derived(Object.keys(startup?.selections ?? {}).length);
+	const startupGroups = $derived.by(() => {
+		const view = startup;
+		return view?.groups.filter((g) =>
+			g.name !== 'GLOBAL' || mode === 'global' || Object.hasOwn(view.selections, g.name)
+		) ?? [];
+	});
+
+	async function loadStartup() {
+		const request = ++startupRequest;
+		try {
+			const view = await backend.startupProxiesGet();
+			if (request === startupRequest) startup = view;
+		} catch (e) {
+			if (request === startupRequest) {
+				startup = null;
+				toast.error(e);
+			}
+		}
+	}
+
+	async function saveStartup(group: string | null, member: string | null) {
+		if (!startup?.profileId || startupBusy) return;
+		startupBusy = true;
+		const request = ++startupRequest;
+		try {
+			const view = await backend.startupProxiesSave(startup.profileId, group, member);
+			if (request === startupRequest) startup = view;
+		} catch (e) {
+			toast.error(e);
+			await loadStartup();
+		} finally {
+			startupBusy = false;
+		}
+	}
+
+	onMount(() => {
+		const listeners = ['profiles-changed', 'custom-groups-changed'].map((event) =>
+			listen(event, () => { if (!core.running) void loadStartup(); }).catch(toast.error)
+		);
+		return () => { for (const listener of listeners) void listener.then((unlisten) => unlisten?.()); };
+	});
 	let proxies = $state<Record<string, Proxy>>({});
 	let providers = $state<ProxyProvider[]>([]);
 	let loading = $state(false);
@@ -43,6 +90,7 @@
 
 	$effect(() => {
 		if (core.api) load();
+		else if (core.status) void loadStartup();
 	});
 
 	const isGroup = (p?: Proxy) => !!p?.all;
@@ -158,7 +206,7 @@
 		<Segmented
 			label="Proxy mode"
 			value={mode}
-			disabled={!core.running}
+			disabled={!core.settings || core.busy}
 			onValueChange={changeMode}
 			options={[
 				{ value: 'rule', label: 'Rule' },
@@ -176,7 +224,46 @@
 <CustomGroupEditor onReady={(actions) => groupEditor = actions} onChange={(view) => groupContext = view} onBusy={(busy) => savingGroups = busy} />
 
 {#if !core.running}
-	<Card><EmptyState title="Core is stopped" description="Start the core on the Dashboard to select proxies and test latency. Custom groups can be created while stopped." /></Card>
+	<Card title="Startup proxy selections">
+		{#snippet actions()}
+			{#if pendingCount}
+				<Button size="sm" disabled={startupBusy || core.busy} onclick={() => saveStartup(null, null)}>Clear selections</Button>
+			{/if}
+		{/snippet}
+		{#if startup?.profileId}
+			<p class="muted hint">These choices apply the next time this profile starts. Provider proxies and latency tests are available once the core is running.</p>
+			{#if mode === 'direct'}
+				<p class="muted hint">Direct mode bypasses proxy groups.</p>
+			{/if}
+			{#each startupGroups as group (group.name)}
+				{@const selected = Object.hasOwn(startup.selections, group.name) ? startup.selections[group.name] : ''}
+				<div class="startup-group">
+					<strong>{group.name}</strong>
+					<Select
+						label={`Startup proxy for ${group.name}`}
+						value={selected}
+						placeholder={selected ? `${selected} (unavailable)` : 'Choose proxy'}
+						options={group.members.map((member) => ({ value: member, label: member }))}
+						disabled={startupBusy || core.busy || savingGroups}
+						onValueChange={(member) => { if (member) void saveStartup(group.name, member); }}
+					/>
+					{#if selected}
+						<Button icon size="sm" title={`Clear startup selection for ${group.name}`} disabled={startupBusy || core.busy} onclick={() => saveStartup(group.name, null)}><Undo2 size={14} /></Button>
+					{/if}
+				</div>
+			{:else}
+				<p class="muted">No proxy group choices are available in this mode. Switch to Global to select from GLOBAL.</p>
+			{/each}
+			{#each Object.keys(startup.selections).filter((name) => !startupGroups.some((group) => group.name === name)) as name (name)}
+				<div class="startup-group">
+					<span>{name} · {startup.selections[name]} (unavailable)</span>
+					<Button icon size="sm" title={`Clear startup selection for ${name}`} disabled={startupBusy || core.busy} onclick={() => saveStartup(name, null)}><Undo2 size={14} /></Button>
+				</div>
+			{/each}
+		{:else if startup}
+			<EmptyState title="No active profile" description="Select a profile to choose its startup proxies." />
+		{/if}
+	</Card>
 {:else}
 	{#if mode === 'direct'}
 		<Card><p class="muted">Direct mode: all traffic bypasses proxies. Group selections still apply when you switch back.</p></Card>
@@ -303,6 +390,14 @@
 {/if}
 
 <style>
+	.startup-group {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2);
+		margin-top: var(--space-2);
+	}
+
 	.group-head {
 		display: flex;
 		align-items: center;

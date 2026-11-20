@@ -325,7 +325,7 @@ async fn start_inner(app: AppHandle) -> Result<CoreStatus> {
             controller: controller.clone(),
             secret: settings.secret.clone(),
             started_at: now_secs(),
-            profile_id,
+            profile_id: profile_id.clone(),
             binary: bin,
         });
         core.generation
@@ -370,6 +370,13 @@ async fn start_inner(app: AppHandle) -> Result<CoreStatus> {
         if tun.pointer("/tun/enable").and_then(serde_json::Value::as_bool) != Some(true) {
             return Err(Error::msg("The core started, but TUN could not be restored. Check TUN permissions and the core log."));
         }
+    }
+    if let Err(error) = crate::startup_proxies::apply(&state, &profile_id, &controller, &settings.secret).await {
+        if let Err(stop_error) = stop_locked(app.clone(), false).await {
+            return Err(Error::msg(format!("{error} Could not stop the core: {stop_error}")));
+        }
+        state.session.lock().unwrap().set_running(false)?;
+        return Err(error);
     }
     emit_status(&app);
     Ok(state.core.lock().unwrap().status(&settings))

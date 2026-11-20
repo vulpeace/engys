@@ -115,6 +115,15 @@ within the next interval plus the scheduler scan delay; repeat with the window h
 stopped. Set 0 and verify requests stop, restart the app to check persistence, and return invalid YAML
 or an unavailable server to check that the old profile remains usable and failures are visible.
 
+### Selecting a proxy before startup
+
+While the core is stopped, open **Proxies** and choose a member under **Startup proxy selections**.
+For ungrouped proxies, switch to **Global** mode and choose a member of **GLOBAL**. Choices are saved
+per profile and applied when its controller becomes ready, then Mihomo remembers them as regular
+group selections. Members resolved through providers or include-all filters become available after
+startup. If a profile change makes a pending choice invalid, update it or use **Clear selections**
+before trying again.
+
 ### Custom proxy groups
 
 On **Proxies**, use **Add group** to create a Select, URL-test, Fallback, or Load-balance group

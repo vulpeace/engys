@@ -120,6 +120,15 @@ pub async fn start_locked(app: AppHandle) -> Result<CoreStatus> {
         }),
     )
     .await?;
+    let status: CoreStatus = android::invoke("status", json!({})).await?;
+    if status.running {
+        if let Err(error) = crate::startup_proxies::apply(&state, &id, &status.controller, &status.secret).await {
+            if let Err(stop_error) = stop_locked(app.clone(), false).await {
+                return Err(crate::error::Error::msg(format!("{error} Could not stop the core: {stop_error}")));
+            }
+            return Err(error);
+        }
+    }
     refresh(&app).await
 }
 pub async fn stop(app: AppHandle) -> Result<CoreStatus> {

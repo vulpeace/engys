@@ -130,6 +130,12 @@ export type CoreBinaryInfo = { path: string | null; version: string | null; erro
 
 export type AndroidMemory = { processRss: number | null; coreHeap: number };
 export type AndroidSetupStatus = { supported: boolean; batteryExempt: boolean; notifications: boolean };
+export type StartupProxies = {
+	profileId: string | null;
+	groups: { name: string; members: string[] }[];
+	selections: Record<string, string>;
+};
+
 export const backend = {
     androidMemory: () => invoke<AndroidMemory>('android_memory'),
     platformInfo: () => invoke<string>('platform_info'),
@@ -140,6 +146,9 @@ export const backend = {
     routingGet: () => invoke<RoutingView>('routing_get'),
     routingSave: (profileId: string, revision: string, entries: RoutingEntry[], providersYaml: string, editInherited: boolean, replaceRules: boolean) =>
         invoke<RoutingView>('routing_save', { profileId, revision, entries, providersYaml, editInherited, replaceRules }),
+	startupProxiesGet: () => invoke<StartupProxies>('startup_proxies_get'),
+	startupProxiesSave: (profileId: string, group: string | null, member: string | null) =>
+		invoke<StartupProxies>('startup_proxies_save', { profileId, group, member }),
 	customGroupsGet: () => invoke<CustomGroupsView>('custom_groups_get'),
 	customGroupsSave: (profileId: string, groups: CustomProxyGroup[]) => invoke<CustomGroupsView>('custom_groups_save', { profileId, groups }),
 	clientMemory: () => invoke<number | null>('client_memory'),

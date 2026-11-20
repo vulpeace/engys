@@ -1,5 +1,6 @@
 mod commands;
 mod custom_groups;
+mod startup_proxies;
 mod routing;
 mod app_rules;
 #[cfg(not(target_os = "android"))]
@@ -264,6 +265,8 @@ pub fn run() {
             commands::android_memory,
             commands::routing_get,
             commands::routing_save,
+            startup_proxies::startup_proxies_get,
+            startup_proxies::startup_proxies_save,
             commands::custom_groups_get,
             commands::custom_groups_save,
             commands::app_rules_get,
