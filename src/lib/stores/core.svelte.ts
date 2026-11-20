@@ -50,7 +50,10 @@ class CoreStore {
 			this.status = e.payload;
 			void this.refreshSettings();
 			if (!e.payload.running) this.tunActive = false;
-			else void this.refreshTunActive();
+			else {
+				void this.refreshTunActive();
+				void this.refreshTunPermission();
+			}
 		});
 		await listen('profiles-changed', () => { void this.refreshSettings(); });
 		await listen<string>('core-log', (e) => {

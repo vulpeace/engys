@@ -181,13 +181,13 @@ pub use crate::core_config::*;
 /// Write `runtime.yaml` for the active profile and validate it with `mihomo -t`.
 /// Returns (binary, profile id, settings).
 pub async fn prepare(app: &AppHandle) -> Result<(PathBuf, String, Settings)> {
-    let (bin, profile_id, settings, runtime) = prepare_candidate(app).await?;
+    let (bin, profile_id, settings, runtime) = prepare_candidate(app, false).await?;
     let state = app.state::<AppState>();
     write_atomic(&state.paths.core_dir.join(RUNTIME_CONFIG), runtime.as_bytes())?;
     Ok((bin, profile_id, settings))
 }
 
-async fn prepare_candidate(app: &AppHandle) -> Result<(PathBuf, String, Settings, String)> {
+async fn prepare_candidate(app: &AppHandle, require_permission: bool) -> Result<(PathBuf, String, Settings, String)> {
     let state = app.state::<AppState>();
     let settings = crate::settings::current(&state);
     let (profile_id, content) = {
@@ -199,14 +199,8 @@ async fn prepare_candidate(app: &AppHandle) -> Result<(PathBuf, String, Settings
     };
     let bin = resolve_binary(&settings, &state.paths.core_bin_dir)?;
     let (runtime, settings) = preview_runtime_config(&state, &profile_id, &content)?;
-    if settings.tun.enable {
-        let perm = crate::privilege::check(&bin);
-        if !perm.granted {
-            return Err(Error::msg(format!(
-                "TUN mode is on but the core lacks permission. {} Grant it on the Dashboard, or turn TUN off.",
-                perm.detail
-            )));
-        }
+    if require_permission && settings.tun.enable {
+        ensure_tun_permission(&bin, false).await?;
     }
     let core_dir = state.paths.core_dir.clone();
     let candidate = core_dir.join(format!("prepare-{}.yaml", uuid::Uuid::new_v4()));
@@ -215,6 +209,26 @@ async fn prepare_candidate(app: &AppHandle) -> Result<(PathBuf, String, Settings
     let _ = std::fs::remove_file(candidate);
     validation?;
     Ok((bin, profile_id, settings, runtime))
+}
+
+async fn ensure_tun_permission(bin: &Path, prompt: bool) -> Result<()> {
+    let permission = crate::privilege::check(bin);
+    if permission.granted {
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    if prompt && permission.can_grant {
+        let bin = bin.to_owned();
+        return tauri::async_runtime::spawn_blocking(move || crate::privilege::grant(&bin))
+            .await
+            .map_err(|error| Error::msg(error.to_string()))?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = prompt;
+    Err(Error::msg(format!(
+        "TUN mode is on but the core lacks permission. {} Grant it on the Dashboard, or turn TUN off.",
+        permission.detail
+    )))
 }
 
 /// Run the installed core's parser, including its own regex engine and policy checks.
@@ -275,16 +289,16 @@ fn pump_logs<R: Read + Send + 'static>(app: AppHandle, logs: Arc<Mutex<VecDeque<
     });
 }
 
-pub async fn start(app: AppHandle) -> Result<CoreStatus> {
+pub async fn start(app: AppHandle, prompt_for_permission: bool) -> Result<CoreStatus> {
     let state = app.state::<AppState>();
     let _operation = state.core_operation.lock().await;
-    start_locked(app.clone()).await
+    start_locked(app.clone(), prompt_for_permission).await
 }
 
 /// Caller must hold core_operation.
-pub async fn start_locked(app: AppHandle) -> Result<CoreStatus> {
+pub async fn start_locked(app: AppHandle, prompt_for_permission: bool) -> Result<CoreStatus> {
     let state = app.state::<AppState>();
-    let result = start_inner(app.clone()).await;
+    let result = start_inner(app.clone(), prompt_for_permission).await;
     if let Err(error) = &result {
         state.core.lock().unwrap().last_error = Some(error.to_string());
         emit_status(&app);
@@ -292,7 +306,7 @@ pub async fn start_locked(app: AppHandle) -> Result<CoreStatus> {
     result
 }
 
-async fn start_inner(app: AppHandle) -> Result<CoreStatus> {
+async fn start_inner(app: AppHandle, prompt_for_permission: bool) -> Result<CoreStatus> {
     let state = app.state::<AppState>();
     if state.core.lock().unwrap().is_running() {
         return Err(Error::msg("Core is already running"));
@@ -301,6 +315,9 @@ async fn start_inner(app: AppHandle) -> Result<CoreStatus> {
     let core_dir = state.paths.core_dir.clone();
     let controller = controller_url(settings.controller_port);
     ensure_controller_available(settings.controller_port)?;
+    if settings.tun.enable {
+        ensure_tun_permission(&bin, prompt_for_permission).await?;
+    }
 
     let generation = {
         let mut core = state.core.lock().unwrap();
@@ -518,7 +535,7 @@ pub async fn reload_locked(app: AppHandle) -> Result<()> {
             None => return Ok(()),
         }
     };
-    let (_, profile_id, _, runtime) = prepare_candidate(&app).await?;
+    let (_, profile_id, _, runtime) = prepare_candidate(&app, true).await?;
     let runtime_file = state.paths.core_dir.join(RUNTIME_CONFIG);
     publish_reload(&runtime_file, &runtime, async {
         let resp = reqwest::Client::new()

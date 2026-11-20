@@ -36,7 +36,8 @@ Turning it on removes that generated rule and disables HTTP proxy use for the ar
 The updater checks the archive's
 size and GitHub-provided SHA-256 digest before extraction, then checks that the binary runs and reports the
 expected version before swapping it in (stopping/restarting the core if needed). On Linux a
-replaced binary loses its TUN capabilities, so TUN permission must be granted again after each update.
+replaced binary loses its TUN capabilities. Starting or restarting it interactively with TUN
+enabled prompts for authorization when those capabilities are missing.
 
 > Linux + NVIDIA/Wayland: if the window is blank, run with `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
 
@@ -373,8 +374,8 @@ version** or **Keep update**, with the original error. Restoring also returns to
 previous external core path when applicable, and restarts the core only if it was
 running before the update. A stopped core's active configuration is validated without
 starting it; with no active profile, validation waits until a profile is configured.
-Linux TUN permission failures also offer recovery; renaming the previous managed
-binary preserves its existing file capabilities.
+On Linux, cancelling the authorization prompt or failing to grant TUN permissions during
+restart also offers recovery. Renaming the previous managed binary preserves its file capabilities.
 
 Manual checks on Windows and Linux: update a running core with a configuration the
 new version rejects, accept restoration, and verify the previous version starts.

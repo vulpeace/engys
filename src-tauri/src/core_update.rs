@@ -335,7 +335,7 @@ pub async fn install(app: AppHandle) -> Result<String> {
     }
     if let Err(error) = replace_binary(&tmp, &target, &backup) {
         if was_running {
-            core::start_locked(app.clone()).await.map_err(|restart| Error::msg(format!(
+            core::start_locked(app.clone(), false).await.map_err(|restart| Error::msg(format!(
                 "{error}. Restarting the previous core also failed: {restart}"
             )))?;
         }
@@ -349,7 +349,7 @@ pub async fn install(app: AppHandle) -> Result<String> {
     };
     let startup = match saved {
         Err(error) => Err(error),
-        Ok(()) if was_running => core::start_locked(app.clone()).await.map(|_| ()),
+        Ok(()) if was_running => core::start_locked(app.clone(), true).await.map(|_| ()),
         Ok(()) => {
             let has_profile = state.profiles.lock().unwrap().active().is_some();
             if has_profile { core::prepare(&app).await.map(|_| ()) } else { Ok(()) }
@@ -383,7 +383,7 @@ pub async fn install(app: AppHandle) -> Result<String> {
                     settings.save(&state.paths.settings_file)?;
                 }
                 if was_running {
-                    core::start_locked(app.clone()).await.map_err(|restart| Error::msg(format!(
+                    core::start_locked(app.clone(), false).await.map_err(|restart| Error::msg(format!(
                         "Previous core restored, but restarting it failed: {restart}"
                     )))?;
                 }

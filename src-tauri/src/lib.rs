@@ -214,8 +214,9 @@ pub fn run() {
             #[cfg(not(target_os = "android"))]
             if resume {
                 let handle = app.handle().clone();
+                let interactive = !background || foreground;
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = core::start(handle).await {
+                    if let Err(error) = core::start(handle, interactive).await {
                         log::error!("Could not restore core state: {error}");
                     }
                 });

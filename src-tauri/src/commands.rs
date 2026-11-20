@@ -26,7 +26,10 @@ pub fn core_status(state: State<'_, AppState>) -> CoreStatus {
 
 #[tauri::command]
 pub async fn core_start(app: AppHandle) -> Result<CoreStatus> {
-    core::start(app).await
+    #[cfg(target_os = "android")]
+    return core::start(app).await;
+    #[cfg(not(target_os = "android"))]
+    core::start(app, true).await
 }
 
 #[tauri::command]
@@ -582,7 +585,7 @@ pub async fn tun_grant_permission(app: AppHandle, state: State<'_, AppState>) ->
             .and_then(|result| result);
         if let Err(error) = granted {
             if was_running {
-                if let Err(restart_error) = core::start(app.clone()).await {
+                if let Err(restart_error) = core::start(app.clone(), false).await {
                     return Err(Error::msg(format!("{error} Restoring the core also failed: {restart_error}")));
                 }
             }
