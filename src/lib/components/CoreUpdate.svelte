@@ -1,26 +1,18 @@
-<script lang="ts">
+<script module lang="ts">
 	import { listen } from '@tauri-apps/api/event';
-	import { Download, RefreshCw } from '@lucide/svelte';
-	import { Badge, Button, Meter, toast } from '#lib/ui/index.ts';
+	import { toast } from '#lib/ui/index.ts';
 	import { backend, type UpdateInfo } from '#lib/api/backend.ts';
 	import { core } from '#lib/stores/core.svelte.ts';
-	import { bytes } from '#lib/format.ts';
 
-	let { standalone = false }: { standalone?: boolean } = $props();
-
+	// Dashboard and Settings share one updater across card mounts.
 	let info = $state<UpdateInfo | null>(null);
 	let checking = $state(false);
 	let installing = $state(false);
-	let progress = $state<{ downloaded: number; total: number } | null>(null);
-
-	$effect(() => {
-		const un = listen<{ downloaded: number; total: number }>('core-update-progress', (e) => (progress = e.payload));
-		return () => {
-			un.then((f) => f());
-		};
-	});
+	type DownloadProgress = { downloaded: number; total: number };
+	let progress = $state<DownloadProgress | null>(null);
 
 	async function check() {
+		if (checking || installing) return;
 		checking = true;
 		try {
 			info = await backend.coreCheckUpdate();
@@ -32,28 +24,42 @@
 	}
 
 	async function install() {
+		if (checking || installing) return;
 		installing = true;
-		progress = null;
+		let unlisten: (() => void) | undefined;
 		try {
+			unlisten = await listen<DownloadProgress>('core-update-progress', ({ payload }) => {
+				progress = payload;
+			});
 			const tag = await backend.coreInstallUpdate();
 			toast.success(`Core ${tag} installed`);
 		} catch (e) {
 			toast.error(e);
 		} finally {
-			installing = false;
+			unlisten?.();
 			progress = null;
 			// Path/version changed; a replaced binary has lost its TUN permission.
-			await Promise.all([core.refreshBinary(), core.refreshTunPermission(), core.refreshSettings()]);
+			await Promise.all([core.refreshBinary(), core.refreshTunPermission(), core.refreshSettings()])
+				.catch((e) => toast.error(e));
 			info = await backend.coreCheckUpdate().catch(() => info);
+			installing = false;
 		}
 	}
+</script>
+
+<script lang="ts">
+	import { Download, RefreshCw } from '@lucide/svelte';
+	import { Badge, Button, Meter } from '#lib/ui/index.ts';
+	import { bytes } from '#lib/format.ts';
+
+	let { standalone = false }: { standalone?: boolean } = $props();
 
 	const label = $derived(
 		!info ? '' : !info.currentVersion ? `Download ${info.latestVersion}` : info.managed ? `Update to ${info.latestVersion}` : `Download ${info.latestVersion}`
 	);
 </script>
 
-<div class="update" class:standalone>
+<div class={['update', { standalone }]}>
 	<div class="row">
 		<div class="text">
 			{#if info}
@@ -74,7 +80,7 @@
 		<div class="actions">
 			<Button size="sm" loading={checking} disabled={installing} onclick={check}><RefreshCw size={14} /> Check</Button>
 			{#if info && (info.updateAvailable || !info.managed)}
-				<Button size="sm" variant="primary" loading={installing} onclick={install}><Download size={14} /> {label}</Button>
+				<Button size="sm" variant="primary" loading={installing} disabled={checking} onclick={install}><Download size={14} /> {label}</Button>
 			{/if}
 		</div>
 	</div>
