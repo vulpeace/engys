@@ -10,5 +10,4 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       platform: android
-      signed_android: true
     secrets: inherit

@@ -22,7 +22,7 @@ on:
       platform:
         type: string
         default: all
-      signed_android:
+      debug_android:
         type: boolean
         default: false
     secrets:
@@ -46,7 +46,7 @@ jobs:
     env:
       BUILD_LINUX: ${{ github.event_name != 'pull_request' && inputs.platform != 'android' && inputs.platform != 'windows' }}
       BUILD_WINDOWS: ${{ github.event_name != 'pull_request' && inputs.platform != 'android' && inputs.platform != 'linux' }}
-      BUILD_ANDROID: ${{ inputs.platform != 'linux' && inputs.platform != 'windows' }}
+      BUILD_ANDROID: ${{ github.event_name != 'pull_request' && inputs.platform != 'linux' && inputs.platform != 'windows' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,7 +122,7 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: actions/setup-go@v5
-        if: ${{ env.BUILD_ANDROID == 'true' }}
+        if: ${{ env.BUILD_ANDROID == 'true' || github.event_name == 'pull_request' }}
         with:
           go-version-file: core-mobile/go.mod
           cache-dependency-path: core-mobile/go.sum
@@ -137,22 +137,22 @@ jobs:
         if: ${{ env.BUILD_ANDROID == 'true' }}
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;28.2.13676358'
       - name: Test native configuration mapping
-        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.signed_android }}
+        if: ${{ github.event_name == 'pull_request' || (env.BUILD_ANDROID == 'true' && inputs.debug_android) }}
         working-directory: core-mobile
         run: go test ./mobile
       - name: Build debug APK
-        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.signed_android }}
+        if: ${{ env.BUILD_ANDROID == 'true' && inputs.debug_android }}
         run: |
           export NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
           pnpm android:build --debug --apk --ci
       - uses: actions/upload-artifact@v4
-        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.signed_android }}
+        if: ${{ env.BUILD_ANDROID == 'true' && inputs.debug_android }}
         with:
           name: android-debug
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
       - name: Prepare signing key
-        if: ${{ env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.debug_android }}
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -170,17 +170,21 @@ jobs:
           key.chmod(0o600)
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'ANDROID_KEYSTORE_PATH={key}\n')
-      - name: Build signed APK and App Bundle
-        if: ${{ env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+      - name: Build signed Android packages
+        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.debug_android }}
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           export NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
-          pnpm android:build --apk --aab --ci
+          formats=(--apk)
+          if [[ "$GITHUB_EVENT_NAME" != push ]]; then
+            formats+=(--aab)
+          fi
+          pnpm android:build "${formats[@]}" --ci
       - name: Upload release artifacts
-        if: ${{ env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.debug_android }}
         uses: actions/upload-artifact@v4
         with:
           name: android-release
@@ -190,7 +194,7 @@ jobs:
             src-tauri/gen/android/app/build/outputs/mapping/*Release/mapping.txt
           if-no-files-found: error
       - name: Remove signing key
-        if: ${{ always() && env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        if: ${{ always() && env.BUILD_ANDROID == 'true' && !inputs.debug_android }}
         shell: python
         run: |
           import os

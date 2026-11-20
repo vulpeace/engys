@@ -1,0 +1,13 @@
+name: Android debug
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: android
+      debug_android: true

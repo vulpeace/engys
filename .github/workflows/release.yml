@@ -35,7 +35,6 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       ref: ${{ needs.resolve-tag.outputs.commit }}
-      signed_android: true
     secrets: inherit
 
   publish:

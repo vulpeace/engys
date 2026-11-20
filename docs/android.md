@@ -72,7 +72,10 @@ The **Android release** workflow is manually triggered and uploads signed APK/AA
 - `ANDROID_KEY_ALIAS`: `keyAlias` from the private properties file.
 - `ANDROID_KEY_PASSWORD`: `keyPassword` from the private properties file.
 
-The existing Android workflow continues to build debug APKs for pushes and pull requests without signing secrets. The release workflow has not been run remotely as part of local setup.
+**Build packages** builds signed release APKs for tag pushes using the same secrets.
+Run **Android debug** manually to build debug APKs without signing secrets.
+**Publish release** uses the same signing secrets as **Android release** and attaches the signed APKs
+to the GitHub release. The AAB is available in the workflow artifacts.
 
 ## Runtime
 
