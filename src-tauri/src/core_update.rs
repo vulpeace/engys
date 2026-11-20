@@ -123,47 +123,14 @@ fn pick_asset(release: &Release) -> Result<Asset> {
         .ok_or_else(|| Error::msg(format!("No release asset named {want}")))
 }
 
-/// The running core's local HTTP-capable proxy port (mixed-port, else port),
-/// as the core itself reports it — the profile may set it, not the app.
-async fn core_proxy_port(app: &AppHandle) -> Option<u16> {
-    let status = {
-        let state = app.state::<AppState>();
-        let settings = state.settings.lock().unwrap().clone();
-        state.core.lock().unwrap().status(&settings)
-    };
-    if !status.running {
-        return None;
-    }
-    let cfg: serde_json::Value = reqwest::Client::new()
-        .get(format!("{}/configs", status.controller))
-        .bearer_auth(&status.secret)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
-    ["mixed-port", "port"]
-        .iter()
-        .filter_map(|k| cfg.get(*k).and_then(serde_json::Value::as_u64))
-        .find(|&p| p > 0 && p <= u16::MAX as u64)
-        .map(|p| p as u16)
-}
-
-/// HTTP client; downloads through the running core's proxy port when there is
-/// one, since GitHub may be slow or blocked without a proxy.
-fn client(proxy_port: Option<u16>, without_proxy: bool) -> Result<reqwest::Client> {
-    let mut b = reqwest::Client::builder()
-        .user_agent("engys")
-        .https_only(true)
-        .connect_timeout(Duration::from_secs(15));
-    if without_proxy {
-        b = b.no_proxy();
-    } else if let Some(port) = proxy_port {
-        b = b.proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}"))?);
-    }
-    Ok(b.build()?)
+async fn client(app: &AppHandle) -> Result<reqwest::Client> {
+    crate::download_route::client(
+        app,
+        reqwest::Client::builder()
+            .user_agent("engys")
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(15)),
+    ).await
 }
 
 async fn latest_release(client: &reqwest::Client) -> Result<Release> {
@@ -186,7 +153,7 @@ fn current(app: &AppHandle) -> (Option<PathBuf>, Option<String>) {
 }
 
 pub async fn check(app: AppHandle) -> Result<UpdateInfo> {
-    let release = latest_release(&client(core_proxy_port(&app).await, false)?).await?;
+    let release = latest_release(&client(&app).await?).await?;
     let asset = pick_asset(&release)?;
     let app2 = app.clone();
     let (path, version) = tauri::async_runtime::spawn_blocking(move || current(&app2))
@@ -249,10 +216,8 @@ fn verify_archive(data: &[u8], expected_sha256: &str) -> Result<()> {
 pub async fn install(app: AppHandle) -> Result<String> {
     let state = app.state::<AppState>();
     let _operation = state.core_operation.lock().await;
-    let proxy_port = core_proxy_port(&app).await;
-    let without_proxy = state.settings.lock().unwrap().download_without_proxy;
-    let release_client = client(proxy_port, false)?;
-    let release = latest_release(&release_client).await?;
+    let client = client(&app).await?;
+    let release = latest_release(&client).await?;
     let asset = pick_asset(&release)?;
     let expected_sha256 = asset.expected_sha256()?;
     let total = asset.size;
@@ -261,12 +226,7 @@ pub async fn install(app: AppHandle) -> Result<String> {
     }
 
     // Download with progress events.
-    let download_client = if without_proxy {
-        client(None, true)?
-    } else {
-        release_client
-    };
-    let mut resp = download_client
+    let mut resp = client
         .get(&asset.browser_download_url)
         .timeout(Duration::from_secs(600))
         .send()

@@ -26,11 +26,13 @@ pub struct Downloaded {
     pub update_interval_hours: Option<u32>,
 }
 
-pub async fn download(url: &str, user_agent: &str) -> Result<Downloaded> {
-    let client = reqwest::Client::builder()
-        .user_agent(user_agent)
-        .timeout(Duration::from_secs(30))
-        .build()?;
+pub async fn download(app: &tauri::AppHandle, url: &str, user_agent: &str) -> Result<Downloaded> {
+    let client = crate::download_route::client(
+        app,
+        reqwest::Client::builder()
+            .user_agent(user_agent)
+            .timeout(Duration::from_secs(30)),
+    ).await?;
     download_with_client(&client, url).await
 }
 

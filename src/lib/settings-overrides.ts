@@ -70,5 +70,6 @@ export function comparableSettings(settings: Settings | null) {
 		}
 	}
 	defaults.overrides = value.overrides.filter((key) => key !== 'tun.enable').sort();
+	defaults.downloadWithoutProxy = false;
 	return defaults;
 }

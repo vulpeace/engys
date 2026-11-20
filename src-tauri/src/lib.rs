@@ -26,6 +26,7 @@ mod core_update;
 #[path = "core_update_android.rs"]
 mod core_update;
 mod error;
+mod download_route;
 mod privilege;
 #[cfg(not(target_os = "android"))]
 mod processes;

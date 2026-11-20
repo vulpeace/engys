@@ -144,7 +144,7 @@ pub async fn profile_add_remote(app: AppHandle, state: State<'_, AppState>, url:
         None
     };
     let ua = state.settings.lock().unwrap().subscription_user_agent.clone();
-    let d = subscription::download(url.trim(), &ua).await?;
+    let d = subscription::download(&app, url.trim(), &ua).await?;
     let name = name
         .filter(|n| !n.trim().is_empty())
         .or(d.suggested_name)
@@ -630,7 +630,7 @@ pub async fn core_set_download_without_proxy(app: AppHandle, enabled: bool) -> R
         *settings = next;
         previous
     };
-    if let Err(error) = core::reload_locked(app.clone()).await {
+    if !cfg!(target_os = "android") && let Err(error) = core::reload_locked(app.clone()).await {
         let mut settings = state.settings.lock().unwrap();
         settings.download_without_proxy = previous;
         if let Err(rollback) = settings.save(&state.paths.settings_file) {

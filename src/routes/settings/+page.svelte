@@ -19,6 +19,23 @@
 	let loginChecked = $state(false);
 	let loginError = $state('');
 
+	let changingRoute = $state(false);
+	let downloadWithoutProxy = $derived(core.settings?.downloadWithoutProxy ?? false);
+
+	async function changeRoute(enabled: boolean) {
+		if (changingRoute) return;
+		changingRoute = true;
+		try {
+			await backend.coreSetDownloadWithoutProxy(enabled);
+			await core.refreshSettings();
+		} catch (e) {
+			toast.error(e);
+		} finally {
+			downloadWithoutProxy = core.settings?.downloadWithoutProxy ?? false;
+			changingRoute = false;
+		}
+	}
+
 	async function refreshLogin() {
 		loginBusy = true;
 		try {
@@ -342,9 +359,16 @@
 	</Field>
 </Card>
 
-<Card title="Requests & profiles">
+<Card title="Requests">
 	<Field label="Request history limit" description="Closed connections kept on the Requests tab." id="hist">
 		<TextField id="hist" type="number" class="narrow" value={draft.requestHistoryLimit} oninput={(e) => (draft.requestHistoryLimit = Math.max(100, Number(e.currentTarget.value) || 2000))} />
+	</Field>
+</Card>
+
+<Card title="Downloads">
+	<Field label="Download without proxy" description="Skip HTTP proxies for core and subscription downloads. Active TUN routing still applies.">
+		<Switch label="Download without proxy" bind:checked={downloadWithoutProxy}
+			onCheckedChange={changeRoute} disabled={changingRoute} />
 	</Field>
 	<Field label="Subscription User-Agent" description="Some providers return a different format depending on this." id="ua">
 		<TextField id="ua" bind:value={draft.subscriptionUserAgent} />

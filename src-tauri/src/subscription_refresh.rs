@@ -312,7 +312,7 @@ pub async fn refresh(
             .source
             .as_deref()
             .ok_or_else(|| Error::msg("The subscription has no URL."))?;
-        let downloaded = subscription::download(url, &user_agent).await?;
+        let downloaded = subscription::download(&app, url, &user_agent).await?;
         drop(_slot);
         let mut rule_choice = None;
         if let Some(prompt) = &prompt {
