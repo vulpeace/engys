@@ -31,6 +31,10 @@ pub async fn download(url: &str, user_agent: &str) -> Result<Downloaded> {
         .user_agent(user_agent)
         .timeout(Duration::from_secs(30))
         .build()?;
+    download_with_client(&client, url).await
+}
+
+async fn download_with_client(client: &reqwest::Client, url: &str) -> Result<Downloaded> {
     let mut resp = client.get(url).send().await.map_err(|e| Error::Http(e.without_url()))?
         .error_for_status().map_err(|e| Error::Http(e.without_url()))?;
     let headers = resp.headers().clone();
@@ -130,14 +134,32 @@ mod tests {
 
     #[test]
     fn rejects_oversized_declared_and_chunked_subscriptions() {
-        use std::io::{BufRead, BufReader, Write};
+        use std::io::{BufRead, BufReader, ErrorKind, Write};
         use std::net::TcpListener;
+        use std::time::Instant;
+
+        let timeout = Duration::from_secs(5);
+        let client = reqwest::Client::builder().no_proxy().timeout(timeout).build().unwrap();
 
         for chunked in [false, true] {
             let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            listener.set_nonblocking(true).unwrap();
             let url = format!("http://{}/?token=private", listener.local_addr().unwrap());
             let server = std::thread::spawn(move || {
-                let (mut socket, _) = listener.accept().unwrap();
+                let deadline = Instant::now() + timeout;
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "No connection to the subscription fixture");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("Could not accept fixture connection: {error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket.set_read_timeout(Some(timeout)).unwrap();
+                socket.set_write_timeout(Some(timeout)).unwrap();
                 let mut request = BufReader::new(&mut socket);
                 let mut line = String::new();
                 while request.read_line(&mut line).unwrap() != 0 && line != "\r\n" {
@@ -153,7 +175,7 @@ mod tests {
                     write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", MAX_SUBSCRIPTION_BYTES + 1).unwrap();
                 }
             });
-            let error = tauri::async_runtime::block_on(download(&url, "test")).err().unwrap();
+            let error = tauri::async_runtime::block_on(download_with_client(&client, &url)).err().unwrap();
             server.join().unwrap();
             assert_eq!(error.to_string(), "Subscription download exceeds the 8 MiB limit.");
         }
