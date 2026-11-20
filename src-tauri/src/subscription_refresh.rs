@@ -63,7 +63,15 @@ pub fn clear_pending(dir: &Path, id: &str) -> Result<()> {
 }
 
 fn matching_pending(dir: &Path, profile: &Profile, content: &str) -> Result<Option<PendingDownload>> {
-    let pending = read_pending(dir, &profile.id)?;
+    let pending = match read_pending(dir, &profile.id) {
+        Ok(pending) => pending,
+        Err(Error::Json(error)) => {
+            log::warn!("Discarding an invalid pending subscription download for {}: {error}", profile.id);
+            clear_pending(dir, &profile.id)?;
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
     if pending.as_ref().is_some_and(|p| p.source != profile.source || p.revision != content) {
         clear_pending(dir, &profile.id)?;
         return Ok(None);
@@ -86,8 +94,16 @@ pub async fn pending_reviews(app: &AppHandle) -> Result<Vec<PendingReview>> {
         if !pending_path(&state.paths.profiles_dir, &profile.id).exists() {
             continue;
         }
-        let content = store.read_content(&profile.id)?;
-        if let Some(pending) = matching_pending(&state.paths.profiles_dir, profile, &content)? {
+        let pending = store.read_content(&profile.id)
+            .and_then(|content| matching_pending(&state.paths.profiles_dir, profile, &content));
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(error) => {
+                log::warn!("Could not read the pending subscription review for {}: {error}", profile.id);
+                continue;
+            }
+        };
+        if let Some(pending) = pending {
             reviews.push(PendingReview {
                 profile_id: profile.id.clone(),
                 profile_name: profile.name.clone(),
@@ -523,6 +539,23 @@ async fn apply_download(
 mod tests {
     use super::*;
     use crate::profiles::new_profile;
+
+    #[test]
+    fn corrupt_pending_download_does_not_block_refresh() {
+        let dir = std::env::temp_dir().join(format!("mihomo-pending-review-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let mut profile = new_profile("Subscription".into(), ProfileKind::Remote, None);
+        profile.id = "subscription".into();
+        let path = pending_path(&dir, &profile.id);
+        std::fs::write(&path, b"{").unwrap();
+
+        let pending = matching_pending(&dir, &profile, "rules: []");
+        let removed = !path.exists();
+        std::fs::remove_dir_all(dir).unwrap();
+
+        assert!(pending.unwrap().is_none());
+        assert!(removed);
+    }
 
     #[test]
     fn pending_download_survives_reopening_and_is_invalidated_by_source_edits() {
