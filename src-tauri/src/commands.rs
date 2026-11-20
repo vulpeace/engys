@@ -394,14 +394,128 @@ pub async fn profile_delete(app: AppHandle, state: State<'_, AppState>, id: Stri
     if core_profile.as_deref() == Some(id.as_str()) {
         return Err(Error::msg("This profile is in use by the running core. Stop the core or activate another profile first."));
     }
-    state.profiles.lock().unwrap().delete(&id, || {
-        state.app_rules.lock().unwrap().remove_profile(&state.paths.app_rules_file, &id)
-    })?;
+    delete_profile_data(&state, &id)?;
     if let Err(error) = crate::subscription_refresh::clear_pending(&state.paths.profiles_dir, &id) {
         log::warn!("Could not remove the pending subscription download for {id}: {error}");
     }
     crate::subscription_refresh::emit_profiles(&app);
     Ok(())
+}
+
+fn delete_profile_data(state: &AppState, id: &str) -> Result<()> {
+    state.profiles.lock().unwrap().delete(id, || {
+        let mut routing = state.routing.lock().unwrap();
+        let mut groups = state.custom_groups.lock().unwrap();
+        let mut next_routing = routing.clone();
+        let mut next_groups = groups.clone();
+        let remove_routing = next_routing.by_profile.remove(id).is_some();
+        let remove_groups = next_groups.by_profile.remove(id).is_some();
+        let mut routing_written = false;
+        let mut groups_written = false;
+        let result = (|| {
+            if remove_routing {
+                next_routing.save(&state.paths.routing_file)?;
+                routing_written = true;
+            }
+            if remove_groups {
+                next_groups.save(&state.paths.custom_groups_file)?;
+                groups_written = true;
+            }
+            state.app_rules.lock().unwrap().remove_profile(&state.paths.app_rules_file, id)
+        })();
+        if let Err(error) = result {
+            let mut failures = Vec::new();
+            if routing_written {
+                if let Err(rollback) = routing.save(&state.paths.routing_file) {
+                    *routing = next_routing;
+                    failures.push(rollback.to_string());
+                }
+            }
+            if groups_written {
+                if let Err(rollback) = groups.save(&state.paths.custom_groups_file) {
+                    *groups = next_groups;
+                    failures.push(rollback.to_string());
+                }
+            }
+            return Err(if failures.is_empty() {
+                error
+            } else {
+                Error::msg(format!(
+                    "{error} Restoring the profile's saved rules or groups failed: {}",
+                    failures.join("; ")
+                ))
+            });
+        }
+        *routing = next_routing;
+        *groups = next_groups;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod profile_delete_tests {
+    use super::*;
+
+    #[test]
+    fn deletion_removes_saved_routing_and_groups_for_only_that_profile() {
+        use crate::{Paths, app_rules, custom_groups, profiles::ProfileStore, routing, session};
+
+        let dir = std::env::temp_dir().join(format!("mihomo-delete-test-{}", uuid::Uuid::new_v4()));
+        let mut profiles = ProfileStore::load(dir.join("profiles"));
+        let deleted = profiles.add(new_profile("Deleted".into(), ProfileKind::Inline, None), "{}").unwrap();
+        let kept = profiles.add(new_profile("Kept".into(), ProfileKind::Inline, None), "{}").unwrap();
+        let routing_file = dir.join("routing.json");
+        let custom_groups_file = dir.join("custom-groups.json");
+        let mut routing = routing::Store::default();
+        let mut groups = custom_groups::GroupsStore::default();
+        for profile in [&deleted, &kept] {
+            routing.by_profile.insert(profile.id.clone(), routing::Overlay::default());
+            groups.by_profile.insert(profile.id.clone(), Vec::new());
+        }
+        routing.save(&routing_file).unwrap();
+        groups.save(&custom_groups_file).unwrap();
+        let state = AppState {
+            paths: Paths {
+                settings_file: dir.join("settings.json"),
+                app_rules_file: dir.join("app-rules.json"),
+                custom_groups_file: custom_groups_file.clone(),
+                routing_file: routing_file.clone(),
+                profiles_dir: dir.join("profiles"),
+                core_dir: dir.join("core"),
+                core_bin_dir: dir.join("bin"),
+            },
+            settings: Default::default(),
+            profiles: profiles.into(),
+            core: Default::default(),
+            app_rules: app_rules::RulesFile::default().into(),
+            custom_groups: groups.into(),
+            routing: routing.into(),
+            session: session::Session::load(&dir.join("session.json")).into(),
+            core_operation: Default::default(),
+            subscription_refresh: crate::subscription_refresh::RefreshState::new(),
+            exiting: Default::default(),
+        };
+
+        let backup = dir.join("custom-groups.backup");
+        std::fs::rename(&custom_groups_file, &backup).unwrap();
+        std::fs::create_dir(&custom_groups_file).unwrap();
+        assert!(delete_profile_data(&state, &deleted.id).is_err());
+        assert!(state.profiles.lock().unwrap().get(&deleted.id).is_ok());
+        assert!(ProfileStore::load(state.paths.profiles_dir.clone()).get(&deleted.id).is_ok());
+        assert!(routing::Store::load(&routing_file).unwrap().by_profile.contains_key(&deleted.id));
+        std::fs::remove_dir(&custom_groups_file).unwrap();
+        std::fs::rename(&backup, &custom_groups_file).unwrap();
+
+        delete_profile_data(&state, &deleted.id).unwrap();
+        let routing = routing::Store::load(&routing_file).unwrap();
+        let groups = custom_groups::GroupsStore::load(&custom_groups_file).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(state.profiles.lock().unwrap().get(&deleted.id).is_err());
+        assert_eq!(routing.by_profile.keys().collect::<Vec<_>>(), [&kept.id]);
+        assert_eq!(groups.by_profile.keys().collect::<Vec<_>>(), [&kept.id]);
+        assert_eq!(state.routing.lock().unwrap().by_profile.len(), 1);
+        assert_eq!(state.custom_groups.lock().unwrap().by_profile.len(), 1);
+    }
 }
 
 /// Mark a profile active; if the core is running, hot-reload it. On failure
