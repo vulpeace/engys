@@ -28,13 +28,14 @@ The AppImage includes WebKitGTK 4.1. If you build a Debian package locally, Taur
 `libwebkit2gtk-4.1-0` as a package dependency instead.
 
 Pushing a Git tag runs **Build packages**. One Ubuntu runner builds the x86-64 AppImage and
-Android debug APKs and cross-compiles an unsigned x64 `engys.exe` with `cargo-xwin`.
-Download the packages from the workflow run's artifacts. Pull requests build only the Android
-debug APKs. You can also run **Build packages** manually for all platforms or just one.
+signed Android release APKs and cross-compiles an unsigned x64 `engys.exe` with `cargo-xwin`.
+Download the packages from the workflow run's artifacts. Pull requests run the frontend and Go
+checks. Run **Android debug** manually to get debug APKs without signing secrets, or run
+**Build packages** manually to build release packages for all platforms or just one.
 
 Run **Android release** to produce signed APK and AAB artifacts. Run **Publish release** to build the
 latest version-sorted tag and attach the AppImage, signed Android APKs and `engys.exe` to
-its GitHub release. Both workflows use the [Android signing secrets](docs/android.md#github-actions).
+its GitHub release. All signed builds use the [Android signing secrets](docs/android.md#github-actions).
 
 The core binary is resolved in this order: **Settings → Core → mihomo binary** (explicit path) → the
 **app-managed core** in `<data>/core-bin/` → a `mihomo` file next to the app executable (bundled sidecar) →
