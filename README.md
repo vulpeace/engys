@@ -18,11 +18,14 @@ cd src-tauri && cargo test
 The app version comes from `package.json`. On Linux, `pnpm build` packages
 `src-tauri/target/release/bundle/appimage/engys_<version>_amd64.AppImage`
 (`amd64` for x86-64 builds). On Windows, `pnpm build --no-bundle` produces
-`src-tauri/target/release/engys.exe`. The executable requires the
-[WebView2 Runtime](https://v2.tauri.app/start/prerequisites/#webview2).
+`src-tauri/target/release/engys.exe`. If WebView2 is missing, launching the executable manually
+offers to open [Microsoft's WebView2 Runtime download page](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download).
+Install the Evergreen Runtime and launch engys again.
 Tauri runs `build:frontend` before compiling the desktop app. Its Linux packaging
 hook embeds `X-AppImage-Version` from `package.json` in the desktop entry so
 AppImage properties show the version too, including with `pnpm tauri build`.
+The AppImage includes WebKitGTK 4.1. If you build a Debian package locally, Tauri declares
+`libwebkit2gtk-4.1-0` as a package dependency instead.
 
 Pushing a Git tag runs **Build packages**. One Ubuntu runner builds the x86-64 AppImage and
 Android debug APKs and cross-compiles an unsigned x64 `engys.exe` with `cargo-xwin`.

@@ -39,6 +39,8 @@ mod subscription;
 mod subscription_refresh;
 mod subscription_links;
 mod util;
+#[cfg(windows)]
+mod windows_webview;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -82,6 +84,10 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(code) = login::maintenance(&args) { std::process::exit(code); }
     let background = args.iter().any(|a| a == "--autostart");
+    #[cfg(windows)]
+    if !windows_webview::ensure_available(!background) {
+        std::process::exit(1);
+    }
     #[cfg(not(target_os = "android"))]
     let handoff = args.iter().any(|a| a == "--elevated-handoff");
     #[cfg(not(target_os = "android"))]
