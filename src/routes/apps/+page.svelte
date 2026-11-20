@@ -124,8 +124,9 @@
 			const profile = activeProfile;
 			if (rulesDirty && !(await ask('Discard unsaved application rule changes?', { title: 'Change rule scope', kind: 'warning' }))) return;
 			if (blocked || !view || activeProfile !== profile) return;
+			const nextApps = $state.snapshot(rulesFor(view, value));
 			scope = value;
-			apps = structuredClone(rulesFor(view, scope));
+			apps = nextApps;
 			legacyImported = false;
 			error = '';
 		} catch (e) { toast.error(e); }
