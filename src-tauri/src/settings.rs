@@ -13,6 +13,7 @@ use crate::util::write_atomic;
 pub struct Settings {
     /// Explicit path to the mihomo binary. `None` = auto-detect.
     pub core_path: Option<String>,
+    pub download_without_proxy: bool,
     pub overrides: BTreeSet<String>,
     pub controller_port: u16,
     pub secret: String,
@@ -92,6 +93,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             core_path: None,
+            download_without_proxy: false,
             overrides: BTreeSet::new(),
             controller_port: 9097,
             secret: String::new(),
@@ -249,6 +251,7 @@ impl Settings {
         }
         let mut next: Settings = serde_json::from_value(value).unwrap();
         next.fallback_secret = self.fallback_secret.clone();
+        next.download_without_proxy = self.download_without_proxy;
         next.overrides
             .retain(|key| PROFILE_FIELDS.iter().any(|(known, _)| known == key));
         next

@@ -611,6 +611,33 @@ pub async fn core_install_update(app: AppHandle) -> Result<String> {
     crate::core_update::install(app).await
 }
 
+#[tauri::command]
+pub async fn core_set_download_without_proxy(app: AppHandle, enabled: bool) -> Result<()> {
+    let state = app.state::<AppState>();
+    let _operation = state.core_operation.lock().await;
+    let previous = {
+        let mut settings = state.settings.lock().unwrap();
+        let previous = settings.download_without_proxy;
+        if previous == enabled {
+            return Ok(());
+        }
+        let mut next = settings.clone();
+        next.download_without_proxy = enabled;
+        next.save(&state.paths.settings_file)?;
+        *settings = next;
+        previous
+    };
+    if let Err(error) = core::reload_locked(app.clone()).await {
+        let mut settings = state.settings.lock().unwrap();
+        settings.download_without_proxy = previous;
+        if let Err(rollback) = settings.save(&state.paths.settings_file) {
+            return Err(Error::msg(format!("{error}. Could not restore download preference: {rollback}")));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn host_of(url: &str) -> String {
     url.split("://")
         .nth(1)

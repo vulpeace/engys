@@ -276,6 +276,7 @@ pub fn run() {
             commands::tun_grant_permission,
             commands::core_check_update,
             commands::core_install_update,
+            commands::core_set_download_without_proxy,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

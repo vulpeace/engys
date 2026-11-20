@@ -20,6 +20,7 @@ export type LoginStatus = {
 };
 
 export type Settings = {
+	downloadWithoutProxy: boolean;
 	overrides: string[];
 	corePath: string | null;
 	controllerPort: number;
@@ -164,6 +165,7 @@ export const backend = {
 	coreCheckUpdate: () => invoke<UpdateInfo>('core_check_update'),
 	/** Downloads the latest release; emits `core-update-progress`. Returns the installed tag. */
 	coreInstallUpdate: () => invoke<string>('core_install_update'),
+	coreSetDownloadWithoutProxy: (enabled: boolean) => invoke<void>('core_set_download_without_proxy', { enabled }),
 
 	settingsGet: () => invoke<Settings>('settings_get'),
 	settingsInherited: () => invoke<Settings>('settings_inherited'),

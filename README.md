@@ -30,7 +30,10 @@ The core binary is resolved in this order: **Settings → Core → mihomo binary
 `mihomo` on `PATH`.
 
 Settings → Core → Check / Download fetches the official release for this OS/CPU from
-`github.com/MetaCubeX/mihomo` (through the running core's proxy if it's up). The updater checks the archive's
+`github.com/MetaCubeX/mihomo` (through the running core's proxy if it's up). With **Download without proxy**
+off, the desktop runtime config routes the engys process through Mihomo's **GLOBAL** selector in Rule mode.
+Turning it on removes that generated rule and disables HTTP proxy use for the archive transfer.
+The updater checks the archive's
 size and GitHub-provided SHA-256 digest before extraction, then checks that the binary runs and reports the
 expected version before swapping it in (stopping/restarting the core if needed). On Linux a
 replaced binary loses its TUN capabilities, so TUN permission must be granted again after each update.

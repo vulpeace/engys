@@ -8,11 +8,27 @@
 	let info = $state<UpdateInfo | null>(null);
 	let checking = $state(false);
 	let installing = $state(false);
+	let changingRoute = $state(false);
+	let downloadWithoutProxy = $derived(core.settings?.downloadWithoutProxy ?? false);
 	type DownloadProgress = { downloaded: number; total: number };
 	let progress = $state<DownloadProgress | null>(null);
 
+	async function changeRoute(enabled: boolean) {
+		if (changingRoute || installing) return;
+		changingRoute = true;
+		try {
+			await backend.coreSetDownloadWithoutProxy(enabled);
+			await core.refreshSettings();
+		} catch (e) {
+			toast.error(e);
+		} finally {
+			downloadWithoutProxy = core.settings?.downloadWithoutProxy ?? false;
+			changingRoute = false;
+		}
+	}
+
 	async function check() {
-		if (checking || installing) return;
+		if (checking || installing || changingRoute) return;
 		checking = true;
 		try {
 			info = await backend.coreCheckUpdate();
@@ -24,7 +40,7 @@
 	}
 
 	async function install() {
-		if (checking || installing) return;
+		if (checking || installing || changingRoute) return;
 		installing = true;
 		let unlisten: (() => void) | undefined;
 		try {
@@ -49,7 +65,7 @@
 
 <script lang="ts">
 	import { Download, RefreshCw } from '@lucide/svelte';
-	import { Badge, Button, Meter } from '#lib/ui/index.ts';
+	import { Badge, Button, Meter, Switch } from '#lib/ui/index.ts';
 	import { bytes } from '#lib/format.ts';
 
 	let { standalone = false }: { standalone?: boolean } = $props();
@@ -78,12 +94,19 @@
 			{/if}
 		</div>
 		<div class="actions">
-			<Button size="sm" loading={checking} disabled={installing} onclick={check}><RefreshCw size={14} /> Check</Button>
+			<Button size="sm" loading={checking} disabled={installing || changingRoute} onclick={check}><RefreshCw size={14} /> Check</Button>
 			{#if info && (info.updateAvailable || !info.managed)}
-				<Button size="sm" variant="primary" loading={installing} disabled={checking} onclick={install}><Download size={14} /> {label}</Button>
+				<Button size="sm" variant="primary" loading={installing} disabled={checking || changingRoute} onclick={install}><Download size={14} /> {label}</Button>
 			{/if}
 		</div>
 	</div>
+	{#if core.settings}
+		<div class="route-option">
+			<Switch label="Download without proxy" bind:checked={downloadWithoutProxy}
+				onCheckedChange={changeRoute} disabled={installing || checking || changingRoute} />
+			<span class="muted small">Download without proxy</span>
+		</div>
+	{/if}
 	{#if installing && progress}
 		<Meter value={progress.downloaded} max={progress.total} label="Download progress" />
 		<span class="muted small">{bytes(progress.downloaded)} / {bytes(progress.total)}</span>
@@ -123,6 +146,11 @@
 		display: flex;
 		gap: var(--space-2);
 		flex-shrink: 0;
+	}
+	.route-option {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
 	}
 	.small {
 		font-size: var(--text-xs);
