@@ -30,21 +30,16 @@ jobs:
           commit=$(git rev-parse "refs/tags/$tag^{commit}")
           printf 'name=%s\ncommit=%s\n' "$tag" "$commit" >> "$GITHUB_OUTPUT"
 
-  linux:
+  build:
     needs: resolve-tag
-    uses: ./.github/workflows/linux.yml
+    uses: ./.github/workflows/build.yml
     with:
       ref: ${{ needs.resolve-tag.outputs.commit }}
-
-  android:
-    needs: resolve-tag
-    uses: ./.github/workflows/android-release.yml
-    with:
-      ref: ${{ needs.resolve-tag.outputs.commit }}
+      signed_android: true
     secrets: inherit
 
   publish:
-    needs: [resolve-tag, linux, android]
+    needs: [resolve-tag, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -58,7 +53,11 @@ jobs:
         with:
           name: android-release
           path: release-assets/android
-      - name: Publish AppImage and signed APK
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: release-assets/windows
+      - name: Publish AppImage, signed APKs and Windows executable
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.resolve-tag.outputs.tag }}
@@ -67,8 +66,9 @@ jobs:
           shopt -s globstar nullglob
           appimages=(release-assets/linux/**/*.AppImage)
           apks=(release-assets/android/**/*-release.apk)
-          if (( ${#appimages[@]} == 0 || ${#apks[@]} == 0 )); then
-            echo 'Expected both an AppImage and a signed release APK.' >&2
+          windows_exe=release-assets/windows/engys.exe
+          if (( ${#appimages[@]} == 0 || ${#apks[@]} == 0 )) || [[ ! -f "$windows_exe" ]]; then
+            echo 'Expected an AppImage, a signed release APK, and engys.exe.' >&2
             exit 1
           fi
 
@@ -79,4 +79,4 @@ jobs:
           fi
 
           gh release create --verify-tag --generate-notes -- \
-            "$RELEASE_TAG" "${appimages[@]}" "${apks[@]}"
+            "$RELEASE_TAG" "${appimages[@]}" "${apks[@]}" "$windows_exe"

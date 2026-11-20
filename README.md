@@ -17,13 +17,21 @@ cd src-tauri && cargo test
 
 The app version comes from `package.json`. On Linux, `pnpm build` packages
 `src-tauri/target/release/bundle/appimage/engys_<version>_amd64.AppImage`
-(`amd64` for x86-64 builds); Windows keeps the configured installer targets.
+(`amd64` for x86-64 builds). On Windows, `pnpm build --no-bundle` produces
+`src-tauri/target/release/engys.exe`. The executable requires the
+[WebView2 Runtime](https://v2.tauri.app/start/prerequisites/#webview2).
 Tauri runs `build:frontend` before compiling the desktop app. Its Linux packaging
 hook embeds `X-AppImage-Version` from `package.json` in the desktop entry so
 AppImage properties show the version too, including with `pnpm tauri build`.
 
-Pushing a Git tag runs the Android and Linux build workflows. Download the debug APKs and the
-x86-64 AppImage from the workflow runs' artifacts. The signed Android release workflow runs on demand.
+Pushing a Git tag runs **Build packages**. One Ubuntu runner builds the x86-64 AppImage and
+Android debug APKs and cross-compiles an unsigned x64 `engys.exe` with `cargo-xwin`.
+Download the packages from the workflow run's artifacts. Pull requests build only the Android
+debug APKs. You can also run **Build packages** manually for all platforms or just one.
+
+Run **Android release** to produce signed APK and AAB artifacts. Run **Publish release** to build the
+latest version-sorted tag and attach the AppImage, signed Android APKs and `engys.exe` to
+its GitHub release. Both workflows use the [Android signing secrets](docs/android.md#github-actions).
 
 The core binary is resolved in this order: **Settings → Core → mihomo binary** (explicit path) → the
 **app-managed core** in `<data>/core-bin/` → a `mihomo` file next to the app executable (bundled sidecar) →
@@ -276,7 +284,8 @@ in tray status and on the Dashboard, without opening a dialog or window at login
   different administrator account in UAC is rejected to avoid registering startup for the wrong user.
   The whole GUI runs elevated, as it does with the existing TUN permission flow. Manual launches use
   the registered task when necessary. Tasks have no execution time limit and run on battery power.
-  NSIS/MSI uninstall removes this installation's tasks; updater-driven upgrades preserve them.
+  Disable start at login before manually removing `engys.exe`. If you built an NSIS or MSI installer
+  locally, uninstall removes that installation's tasks and updater-driven upgrades preserve them.
 - **Linux:** writes `$XDG_CONFIG_HOME/autostart/top.vulpeace.engys.desktop` (default `~/.config/autostart/`).
   AppImage registration uses the persistent `APPIMAGE` path, not the temporary mounted executable.
   TUN still needs capabilities granted on the current core binary.

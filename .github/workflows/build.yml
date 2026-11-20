@@ -1,0 +1,198 @@
+name: Build packages
+on:
+  push:
+    tags:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Packages to build
+        type: choice
+        default: all
+        options:
+          - all
+          - linux
+          - android
+          - windows
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+      platform:
+        type: string
+        default: all
+      signed_android:
+        type: boolean
+        default: false
+    secrets:
+      ANDROID_RELEASE_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu:
+    name: Build selected platforms
+    if: ${{ github.event.deleted != true }}
+    runs-on: ubuntu-22.04
+    env:
+      BUILD_LINUX: ${{ github.event_name != 'pull_request' && inputs.platform != 'android' && inputs.platform != 'windows' }}
+      BUILD_WINDOWS: ${{ github.event_name != 'pull_request' && inputs.platform != 'android' && inputs.platform != 'linux' }}
+      BUILD_ANDROID: ${{ inputs.platform != 'linux' && inputs.platform != 'windows' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - name: Refresh package index
+        if: ${{ env.BUILD_LINUX == 'true' || env.BUILD_WINDOWS == 'true' }}
+        run: sudo apt-get update
+      - name: Install Tauri and AppImage dependencies
+        if: ${{ env.BUILD_LINUX == 'true' }}
+        run: |
+          sudo apt-get install -y --no-install-recommends build-essential file \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev libfuse2 patchelf
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - name: Build Linux AppImage
+        if: ${{ env.BUILD_LINUX == 'true' }}
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: pnpm build
+      - uses: actions/upload-artifact@v4
+        if: ${{ env.BUILD_LINUX == 'true' }}
+        with:
+          name: linux-appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+      - name: Free Linux build space before the other builds
+        if: ${{ env.BUILD_LINUX == 'true' && (env.BUILD_WINDOWS == 'true' || env.BUILD_ANDROID == 'true') }}
+        run: cargo clean --release --manifest-path src-tauri/Cargo.toml
+      - name: Install Windows cross-compilation tools
+        if: ${{ env.BUILD_WINDOWS == 'true' }}
+        run: |
+          sudo apt-get install -y --no-install-recommends clang lld llvm
+          rustup target add x86_64-pc-windows-msvc
+          cargo install --locked cargo-xwin --version 0.23.1
+          printf 'XWIN_CACHE_DIR=%s/engys-xwin\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Build Windows executable
+        if: ${{ env.BUILD_WINDOWS == 'true' }}
+        env:
+          XWIN_ARCH: x86_64
+        run: pnpm build --no-bundle --runner cargo-xwin --target x86_64-pc-windows-msvc
+      - name: Upload Windows executable
+        if: ${{ env.BUILD_WINDOWS == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/engys.exe
+          if-no-files-found: error
+      - name: Free Windows build space before Android packaging
+        if: ${{ env.BUILD_WINDOWS == 'true' && env.BUILD_ANDROID == 'true' }}
+        run: |
+          cargo clean --release --target x86_64-pc-windows-msvc --manifest-path src-tauri/Cargo.toml
+          rm -rf -- "${XWIN_CACHE_DIR:?}"
+      - uses: actions/setup-java@v4
+        if: ${{ env.BUILD_ANDROID == 'true' }}
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-go@v5
+        if: ${{ env.BUILD_ANDROID == 'true' }}
+        with:
+          go-version-file: core-mobile/go.mod
+          cache-dependency-path: core-mobile/go.sum
+      - name: Install Android Rust targets
+        if: ${{ env.BUILD_ANDROID == 'true' }}
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: android-actions/setup-android@v3
+        if: ${{ env.BUILD_ANDROID == 'true' }}
+        with:
+          packages: platform-tools
+      - name: Install Android SDK and NDK
+        if: ${{ env.BUILD_ANDROID == 'true' }}
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+      - name: Test native configuration mapping
+        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.signed_android }}
+        working-directory: core-mobile
+        run: go test ./mobile
+      - name: Build debug APK
+        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.signed_android }}
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          pnpm android:build --debug --apk --ci
+      - uses: actions/upload-artifact@v4
+        if: ${{ env.BUILD_ANDROID == 'true' && !inputs.signed_android }}
+        with:
+          name: android-debug
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+      - name: Prepare signing key
+        if: ${{ env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: python
+        run: |
+          import base64, os
+          from pathlib import Path
+          required = ['RELEASE_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
+          if any(not os.environ.get(name) for name in required):
+              raise SystemExit('Configure the four Android release signing secrets before running this workflow.')
+          key = Path(os.environ['RUNNER_TEMP']) / 'mihomo-release.p12'
+          key.write_bytes(base64.b64decode(os.environ['RELEASE_KEYSTORE_BASE64'], validate=True))
+          key.chmod(0o600)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'ANDROID_KEYSTORE_PATH={key}\n')
+      - name: Build signed APK and App Bundle
+        if: ${{ env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          pnpm android:build --apk --aab --ci
+      - name: Upload release artifacts
+        if: ${{ env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/*Release/*.aab
+            src-tauri/gen/android/app/build/outputs/mapping/*Release/mapping.txt
+          if-no-files-found: error
+      - name: Remove signing key
+        if: ${{ always() && env.BUILD_ANDROID == 'true' && inputs.signed_android }}
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          (Path(os.environ['RUNNER_TEMP']) / 'mihomo-release.p12').unlink(missing_ok=True)
