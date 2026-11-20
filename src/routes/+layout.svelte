@@ -39,6 +39,7 @@
 		const nextSession = status?.running ? `${status.pid}:${status.startedAt}` : null;
 		untrack(() => {
 			live.disconnect();
+			if (!nextSession) live.clearConnections();
 			if (nextSession !== session || !api) live.resetSession();
 			session = nextSession;
 			if (api) live.connect(api);

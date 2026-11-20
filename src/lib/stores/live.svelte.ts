@@ -67,7 +67,7 @@ class LiveStore {
 		for (const r of this.#map.values()) {
 			if (!r.closedAt) Object.assign(r, { closedAt: now, upSpeed: 0, downSpeed: 0 });
 		}
-		this.records = [...this.records];
+		this.#publish();
 	}
 
 	/** New core session: wipe session counters and chart. */
@@ -76,6 +76,12 @@ class LiveStore {
 		this.uploadTotal = 0;
 		this.downloadTotal = 0;
 		this.samples = { t: [], up: [], down: [] };
+	}
+
+	clearConnections() {
+		this.#map.clear();
+		this.records = [];
+		this.activeCount = 0;
 	}
 
 	clearHistory() {

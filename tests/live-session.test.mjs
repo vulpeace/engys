@@ -78,6 +78,25 @@ test('a fresh snapshot reopens connections that survived a stream reconnect', ()
 	assert.notEqual(live.records.find(({ conn }) => conn.id === closed.id).closedAt, null);
 });
 
+test('disconnect publishes closed records while preserving the previous snapshot', () => {
+	const api = connect();
+	const conn = { id: 'disconnect-test', upload: 1, download: 2 };
+	api.connections(1, 2, [conn]);
+	api.connections(3, 6, [{ ...conn, upload: 3, download: 6 }]);
+	const previous = live.records.find((record) => record.conn.id === conn.id);
+	assert.equal(previous.closedAt, null);
+	assert.equal(previous.downSpeed, 4);
+
+	live.disconnect();
+
+	const closed = live.records.find((record) => record.conn.id === conn.id);
+	assert.equal(live.activeCount, 0);
+	assert.ok(closed.closedAt > 0);
+	assert.equal(closed.upSpeed, 0);
+	assert.equal(closed.downSpeed, 0);
+	assert.equal(previous.closedAt, null);
+});
+
 test('callbacks from a stopped session cannot restore old totals after restart', () => {
 	const previous = connect();
 	previous.traffic(1000, 2000);
@@ -90,4 +109,21 @@ test('callbacks from a stopped session cannot restore old totals after restart',
 	assert.equal(live.uploadTotal, 10);
 	assert.equal(live.downloadTotal, 20);
 	assert.equal(live.samples.t.length, 1);
+});
+
+test('clearing connections after stop removes both active and closed history', () => {
+	const api = connect();
+	const active = { id: 'active-at-stop', upload: 0, download: 0 };
+	const closed = { id: 'closed-before-stop', upload: 0, download: 0 };
+	api.connections(0, 0, [active, closed]);
+	api.connections(0, 0, [active]);
+
+	live.disconnect();
+	live.clearConnections();
+	assert.deepEqual(live.records, []);
+	assert.equal(live.activeCount, 0);
+
+	api.connections(0, 0, [active]);
+	connect().connections(0, 0);
+	assert.deepEqual(live.records, []);
 });

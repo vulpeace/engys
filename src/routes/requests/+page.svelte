@@ -15,6 +15,14 @@
 
 	const source = $derived(paused ? frozen : live.records);
 
+	$effect(() => {
+		if (core.running) return;
+		paused = false;
+		frozen = [];
+		detailOpen = false;
+		detail = null;
+	});
+
 	const target = (r: ConnRecord) => {
 		const m = r.conn.metadata;
 		return `${m.host || m.sniffHost || m.destinationIP}:${m.destinationPort}`;
@@ -65,7 +73,7 @@
 
 <PageHeader title="Requests" subtitle="{live.activeCount} active · {live.records.length} in history (limit {live.historyLimit})">
 	{#snippet actions()}
-		<Button onclick={togglePause} title={paused ? 'Resume live updates' : 'Freeze the list'}>
+		<Button onclick={togglePause} disabled={!core.running} title={paused ? 'Resume live updates' : 'Freeze the list'}>
 			{#if paused}<Play size={14} /> Resume{:else}<Pause size={14} /> Pause{/if}
 		</Button>
 		<Button onclick={() => live.clearHistory()} title="Remove closed connections from the list">
