@@ -30,13 +30,16 @@
 		live.historyLimit = core.settings?.requestHistoryLimit ?? 2000;
 	});
 
+	const runningSession = $derived(core.status?.running ? `${core.status.pid}:${core.status.startedAt}` : null);
+	const controller = $derived(core.status?.controller);
+	const secret = $derived(core.status?.secret);
 	let session: string | null = null;
 
 	// Reset counters on stop or a new process, while preserving them on config reload.
 	$effect(() => {
-		const api = core.api;
-		const status = core.status;
-		const nextSession = status?.running ? `${status.pid}:${status.startedAt}` : null;
+		const nextSession = runningSession;
+		// Status polling replaces the object even when the stream endpoint is unchanged.
+		const api = nextSession && controller !== undefined && secret !== undefined ? untrack(() => core.api) : null;
 		untrack(() => {
 			live.disconnect();
 			if (!nextSession) live.clearConnections();
