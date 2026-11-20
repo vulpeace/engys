@@ -181,6 +181,13 @@ pub use crate::core_config::*;
 /// Write `runtime.yaml` for the active profile and validate it with `mihomo -t`.
 /// Returns (binary, profile id, settings).
 pub async fn prepare(app: &AppHandle) -> Result<(PathBuf, String, Settings)> {
+    let (bin, profile_id, settings, runtime) = prepare_candidate(app).await?;
+    let state = app.state::<AppState>();
+    write_atomic(&state.paths.core_dir.join(RUNTIME_CONFIG), runtime.as_bytes())?;
+    Ok((bin, profile_id, settings))
+}
+
+async fn prepare_candidate(app: &AppHandle) -> Result<(PathBuf, String, Settings, String)> {
     let state = app.state::<AppState>();
     let settings = crate::settings::current(&state);
     let (profile_id, content) = {
@@ -207,8 +214,7 @@ pub async fn prepare(app: &AppHandle) -> Result<(PathBuf, String, Settings)> {
     let validation = validate_config_file(&bin, &core_dir, &candidate).await;
     let _ = std::fs::remove_file(candidate);
     validation?;
-    write_atomic(&core_dir.join(RUNTIME_CONFIG), runtime.as_bytes())?;
-    Ok((bin, profile_id, settings))
+    Ok((bin, profile_id, settings, runtime))
 }
 
 /// Run the installed core's parser, including its own regex engine and policy checks.
@@ -512,18 +518,49 @@ pub async fn reload_locked(app: AppHandle) -> Result<()> {
             None => return Ok(()),
         }
     };
-    let (_, profile_id, _) = prepare(&app).await?;
-    let resp = reqwest::Client::new()
-        .put(format!("{controller}/configs?force=true"))
-        .bearer_auth(&secret)
-        .json(&serde_json::json!({ "path": "", "payload": "" }))
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(Error::msg(format!("Core rejected the config: {body}")));
-    }
+    let (_, profile_id, _, runtime) = prepare_candidate(&app).await?;
+    let runtime_file = state.paths.core_dir.join(RUNTIME_CONFIG);
+    publish_reload(&runtime_file, &runtime, async {
+        let resp = reqwest::Client::new()
+            .put(format!("{controller}/configs?force=true"))
+            .bearer_auth(&secret)
+            .json(&serde_json::json!({ "path": "", "payload": "" }))
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::msg(format!("Core rejected the config: {body}")));
+        }
+        Ok(())
+    }).await?;
     notify_reloaded(&app, &profile_id);
+    Ok(())
+}
+
+async fn publish_reload(
+    runtime_file: &Path,
+    runtime: &str,
+    reload: impl Future<Output = Result<()>>,
+) -> Result<()> {
+    let previous = match std::fs::read(runtime_file) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    write_atomic(runtime_file, runtime.as_bytes())?;
+    if let Err(error) = reload.await {
+        let restore = match previous {
+            Some(bytes) => write_atomic(runtime_file, &bytes),
+            None => match std::fs::remove_file(runtime_file) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            },
+        };
+        restore.map_err(|rollback| {
+            Error::msg(format!("{error} Restoring the previous runtime config failed: {rollback}"))
+        })?;
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -537,6 +574,26 @@ pub fn notify_reloaded(app: &AppHandle, profile_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_reload_preserves_the_runtime_file() {
+        let dir = std::env::temp_dir().join(format!("mihomo-reload-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join(RUNTIME_CONFIG);
+        let previous = "rules: ['MATCH,DIRECT']";
+        let candidate = "rules: ['MATCH,REJECT']";
+        write_atomic(&path, previous.as_bytes()).unwrap();
+
+        let result = tauri::async_runtime::block_on(publish_reload(&path, candidate, async {
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), candidate);
+            Err(Error::msg("Core rejected the config"))
+        }));
+        let saved = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(saved, previous);
+    }
 
     #[test]
     fn startup_rejects_an_existing_controller_instead_of_using_its_api() {
