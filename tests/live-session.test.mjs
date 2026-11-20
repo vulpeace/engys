@@ -17,7 +17,7 @@ function connect() {
 	live.connect({ stream(path, callback) { callbacks[path] = callback; return () => {}; } });
 	return {
 		traffic: (upTotal, downTotal) => callbacks['/traffic']({ up: 0, down: 0, upTotal, downTotal }),
-		connections: (uploadTotal, downloadTotal) => callbacks['/connections?interval=1000']({ uploadTotal, downloadTotal, connections: [] })
+		connections: (uploadTotal, downloadTotal, connections = []) => callbacks['/connections?interval=1000']({ uploadTotal, downloadTotal, connections })
 	};
 }
 
@@ -62,6 +62,20 @@ test('reconnecting within the same process preserves its counters and chart', ()
 	next.traffic(120, 240);
 	assert.equal(live.uploadTotal, 120);
 	assert.equal(live.samples.t.length, 2);
+});
+
+test('a fresh snapshot reopens connections that survived a stream reconnect', () => {
+	const first = connect();
+	const open = { id: 'open', upload: 1, download: 2 };
+	const closed = { id: 'closed', upload: 3, download: 4 };
+	first.connections(4, 6, [open, closed]);
+
+	const next = connect();
+	next.connections(5, 7, [{ ...open, upload: 2, download: 3 }]);
+
+	assert.equal(live.activeCount, 1);
+	assert.equal(live.records.find(({ conn }) => conn.id === open.id).closedAt, null);
+	assert.notEqual(live.records.find(({ conn }) => conn.id === closed.id).closedAt, null);
 });
 
 test('callbacks from a stopped session cannot restore old totals after restart', () => {

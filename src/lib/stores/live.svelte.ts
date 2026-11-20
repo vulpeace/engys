@@ -103,6 +103,7 @@ class LiveStore {
 			seen.add(c.id);
 			const prev = this.#map.get(c.id);
 			if (prev) {
+				prev.closedAt = null;
 				prev.upSpeed = Math.max(0, c.upload - prev.conn.upload);
 				prev.downSpeed = Math.max(0, c.download - prev.conn.download);
 				prev.conn = c;
