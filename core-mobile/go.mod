@@ -1,4 +1,4 @@
-module dev.mihomo.client/core-mobile
+module top.vulpeace.engys/core-mobile
 
 go 1.26.11
 

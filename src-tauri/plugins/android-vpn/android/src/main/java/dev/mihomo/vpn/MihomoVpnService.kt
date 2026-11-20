@@ -75,7 +75,7 @@ class MihomoVpnService : VpnService() {
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val stop = PendingIntent.getService(this, 2, Intent(this, MihomoVpnService::class.java).setAction(STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_vpn)
-            .setContentTitle("Mihomo Client").setContentText("Proxy service running")
+            .setContentTitle("engys").setContentText("Proxy service running")
             .setOngoing(true).setSilent(true).setOnlyAlertOnce(true).setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).addAction(0, "Disconnect", stop)
             .apply { if (launch != null) setContentIntent(PendingIntent.getActivity(this@MihomoVpnService, 1, launch, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)) }.build()
@@ -216,7 +216,7 @@ class MihomoVpnService : VpnService() {
         }
     }
     private fun establish(options: JSONObject): Int {
-        val builder = Builder().setSession("Mihomo Client").setMtu(options.getInt("mtu"))
+        val builder = Builder().setSession("engys").setMtu(options.getInt("mtu"))
             .addAddress("198.18.0.1", 30).addDnsServer("198.18.0.2").setBlocking(false).setMetered(false)
         if (options.getBoolean("ipv6")) builder.addAddress("fdfe:dcba:9876::1", 126).addDnsServer("fdfe:dcba:9876::2")
         val routes = options.getJSONArray("routes")
@@ -245,7 +245,7 @@ class MihomoVpnService : VpnService() {
         var foreignResponses = 0
         repeat(120) {
             try {
-                val connection = java.net.URL(options.getString("controller") + "/mihomo-client/instance").openConnection() as java.net.HttpURLConnection
+                val connection = java.net.URL(options.getString("controller") + "/engys/instance").openConnection() as java.net.HttpURLConnection
                 try {
                     connection.connectTimeout = 500; connection.readTimeout = 500
                     connection.setRequestProperty("Authorization", "Bearer " + options.getString("secret"))

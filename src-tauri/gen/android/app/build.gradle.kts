@@ -19,7 +19,7 @@ val signingProperties = Properties().apply {
     val dataHome = providers.environmentVariable("XDG_DATA_HOME").orNull
         ?: "${System.getProperty("user.home")}/.local/share"
     val path = providers.environmentVariable("MIHOMO_ANDROID_SIGNING_PROPERTIES").orNull
-        ?: "$dataHome/mihomo-client/signing/release.properties"
+        ?: "$dataHome/engys/signing/release.properties"
     val propertiesFile = file(path)
     if (propertiesFile.isFile) propertiesFile.inputStream().use { load(it) }
 }
@@ -35,10 +35,10 @@ val releaseSigningAvailable = listOf(releaseStore, releaseStorePassword, release
 android {
     compileSdk = 36
     ndkVersion = "28.2.13676358"
-    namespace = "dev.mihomo.client"
+    namespace = "top.vulpeace.engys"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "dev.mihomo.client"
+        applicationId = "top.vulpeace.engys"
         minSdk = 29
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

@@ -6,13 +6,13 @@ $sid = $identity.User.Value
 if ($ExpectedSid -and $sid -ne $ExpectedSid) {
     throw 'Start at login must be configured using the same Windows account. A different administrator account is not supported.'
 }
-$name = "Mihomo Client-$sid"
+$name = "engys-$sid"
 $arguments = '--autostart --scheduled-launch'
 
 if ($Mode -eq 'cleanup' -or $Mode -eq 'has-tasks') {
     # Only remove this product's tasks whose executable is the one being removed.
     $tasks = @(Get-ScheduledTask | Where-Object {
-        $_.TaskName -like 'Mihomo Client-S-1-*' -and
+        $_.TaskName -like 'engys-S-1-*' -and
         $_.Actions.Count -eq 1 -and $_.Actions[0].Execute -eq $Executable
     })
     if ($Mode -eq 'has-tasks') { ($tasks.Count -gt 0).ToString().ToLowerInvariant() }
@@ -65,7 +65,7 @@ if ($Mode -eq 'status') {
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable
     Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal `
-        -Settings $settings -Description 'Mihomo Client: restore the previous core state at user login.' -Force | Out-Null
+        -Settings $settings -Description 'engys: restore the previous core state at user login.' -Force | Out-Null
     # Let the unelevated launcher query/run the task, without granting write access.
     $scheduler = New-Object -ComObject 'Schedule.Service'
     $scheduler.Connect()

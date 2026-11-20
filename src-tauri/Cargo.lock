@@ -852,6 +852,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
+name = "engys"
+version = "1.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "libc",
+ "log",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-android-vpn",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-log",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+ "which",
+ "windows-sys 0.60.2",
+ "zip",
+]
+
+[[package]]
 name = "env_filter"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1984,35 +2013,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "mihomo-client"
-version = "1.1.0"
-dependencies = [
- "base64 0.22.1",
- "flate2",
- "libc",
- "log",
- "percent-encoding",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.10.9",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-android-vpn",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-log",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
- "which",
- "windows-sys 0.60.2",
- "zip",
 ]
 
 [[package]]

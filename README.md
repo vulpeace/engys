@@ -1,6 +1,8 @@
-# Mihomo Client
+# engys
 
-Desktop GUI for the [mihomo](../mihomo) proxy core. Tauri v2 (Rust) + SvelteKit (Svelte 5, SPA) + Bits UI.
+Desktop GUI by vulpeace for the [mihomo](../mihomo) proxy core. Tauri v2 (Rust) + SvelteKit (Svelte 5, SPA) + Bits UI.
+
+[GPL-3.0 license](LICENSE) · [Source repository](https://github.com/vulpeace/engys)
 
 ## Run
 
@@ -14,7 +16,7 @@ cd src-tauri && cargo test
 ```
 
 The app version comes from `package.json`. On Linux, `pnpm build` packages
-`src-tauri/target/release/bundle/appimage/Mihomo Client_<version>_amd64.AppImage`
+`src-tauri/target/release/bundle/appimage/engys_<version>_amd64.AppImage`
 (`amd64` for x86-64 builds); Windows keeps the configured installer targets.
 Tauri runs `build:frontend` before compiling the desktop app. Its Linux packaging
 hook embeds `X-AppImage-Version` from `package.json` in the desktop entry so
@@ -262,14 +264,14 @@ mihomo's cache), and window geometry are retained. Connections and traffic count
 Operational state lives in `session.json`, separately from editable settings. Startup failures appear
 in tray status and on the Dashboard, without opening a dialog or window at login.
 
-- **Windows:** registers `Mihomo Client-<user SID>` in Task Scheduler with an at-login trigger for that
+- **Windows:** registers `engys-<user SID>` in Task Scheduler with an at-login trigger for that
   user, interactive logon, and highest privileges. Enabling/disabling asks for UAC when necessary;
   subsequent login launches need no prompt. This requires an administrator account. Supplying a
   different administrator account in UAC is rejected to avoid registering startup for the wrong user.
   The whole GUI runs elevated, as it does with the existing TUN permission flow. Manual launches use
   the registered task when necessary. Tasks have no execution time limit and run on battery power.
   NSIS/MSI uninstall removes this installation's tasks; updater-driven upgrades preserve them.
-- **Linux:** writes `$XDG_CONFIG_HOME/autostart/dev.mihomo.client.desktop` (default `~/.config/autostart/`).
+- **Linux:** writes `$XDG_CONFIG_HOME/autostart/top.vulpeace.engys.desktop` (default `~/.config/autostart/`).
   AppImage registration uses the persistent `APPIMAGE` path, not the temporary mounted executable.
   TUN still needs capabilities granted on the current core binary.
 
@@ -318,8 +320,10 @@ integrity levels. Registration helpers run before the GUI and never start anothe
   - **macOS**: not supported yet.
 - On stop and on app exit the core gets SIGTERM and up to 3 s to remove its routes before being killed.
 
-Data locations (Linux): settings in `~/.config/dev.mihomo.client/`, profiles and the core working dir
-(GEO databases, cache, `runtime.yaml`) in `~/.local/share/dev.mihomo.client/`.
+Data locations (Linux): settings in `~/.config/top.vulpeace.engys/`, profiles and the core working dir
+(GEO databases, cache, `runtime.yaml`) in `~/.local/share/top.vulpeace.engys/`.
+Installations using the previous application identifier keep their data in their original directories.
+Android treats `top.vulpeace.engys` as a separate app from the previous package.
 
 ## Layout
 
@@ -380,8 +384,8 @@ Android builds share this project and bundle the mihomo core. See [Android build
 
 ### Subscription links
 
-Open a link of the form `mihomo-client://import-sub?url=encodedUrl&refresh=int#name`
-to review and download a subscription in Mihomo Client. Use `encodeURIComponent`
+Open a link of the form `engys://import-sub?url=encodedUrl&refresh=int#name`
+to review and download a subscription in engys. Use `encodeURIComponent`
 on the full HTTP or HTTPS subscription URL and on the optional profile name.
 
 - `url` is required.
@@ -390,7 +394,7 @@ on the full HTTP or HTTPS subscription URL and on the optional profile name.
 - `#name` is optional. If omitted, the app uses the server's suggested name or
   the subscription host.
 
-Example: `mihomo-client://import-sub?url=https%3A%2F%2Fexample.com%2Fconfig.yaml%3Fid%3D42&refresh=60#My%20Profile`
+Example: `engys://import-sub?url=https%3A%2F%2Fexample.com%2Fconfig.yaml%3Fid%3D42&refresh=60#My%20Profile`
 
 On Linux, launch the AppImage once to register the scheme if your desktop has
 not already registered it.
@@ -400,7 +404,7 @@ not already registered it.
 The Android Go bridge adapts VPN socket protection and app identification hooks
 from [FlClash by chen08209 and contributors](https://github.com/chen08209/FlClash/blob/43a7af80bb0d3ce25c99efeca9868ee6abfed7c7/core/lib.go#L30-L153)
 and listener shutdown code from [FlClashX by pluralplay and contributors](https://github.com/pluralplay/FlClashX/blob/99ae586c4c10396007878cd8e2b846c8f8f88286/core/lifecycle.go).
-Mihomo Client modified these sections for its Android host interface and core
+engys modified these sections for its Android host interface and core
 lifecycle on 2026-11-19. The adapted code is distributed under the
 [GNU General Public License, version 3](LICENSE).
 

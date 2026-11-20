@@ -1,7 +1,13 @@
 {
-	"name": "app",
+	"name": "engys",
 	"version": "1.1.0",
 	"private": true,
+	"author": "vulpeace",
+	"license": "GPL-3.0-only",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/vulpeace/engys.git"
+	},
 	"type": "module",
 	"imports": {
 		"#lib": "./src/lib/index.js",

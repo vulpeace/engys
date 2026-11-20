@@ -1,4 +1,4 @@
-package dev.mihomo.client
+package top.vulpeace.engys
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

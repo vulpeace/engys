@@ -10,7 +10,7 @@ import subprocess
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    default = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'mihomo-client/signing'
+    default = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'engys/signing'
     parser.add_argument('--directory', type=Path, default=default)
     args = parser.parse_args()
     directory = args.directory.expanduser().resolve()
@@ -25,14 +25,14 @@ def main():
     environment['MIHOMO_SIGNING_PASSWORD'] = password
     subprocess.run([
         'keytool', '-genkeypair', '-keystore', str(keystore), '-storetype', 'PKCS12',
-        '-alias', 'mihomo-client', '-keyalg', 'RSA', '-keysize', '4096', '-validity', '10000',
-        '-dname', 'CN=Mihomo Client', '-storepass:env', 'MIHOMO_SIGNING_PASSWORD',
+        '-alias', 'engys', '-keyalg', 'RSA', '-keysize', '4096', '-validity', '10000',
+        '-dname', 'CN=engys, O=vulpeace', '-storepass:env', 'MIHOMO_SIGNING_PASSWORD',
         '-keypass:env', 'MIHOMO_SIGNING_PASSWORD', '-noprompt',
     ], env=environment, check=True)
     keystore.chmod(0o600)
     escaped_path = json.dumps(str(keystore), ensure_ascii=True)[1:-1]
     with properties.open('x', encoding='ascii') as output:
-        output.write(f'storeFile={escaped_path}\nstorePassword={password}\nkeyAlias=mihomo-client\nkeyPassword={password}\n')
+        output.write(f'storeFile={escaped_path}\nstorePassword={password}\nkeyAlias=engys\nkeyPassword={password}\n')
     properties.chmod(0o600)
     print(f'Keystore: {keystore}')
     print(f'Signing configuration: {properties}')

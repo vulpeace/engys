@@ -6,7 +6,7 @@
     ],
     "linux": {
       "deb": {
-        "desktopTemplate": "target/packaging/mihomo-client.desktop"
+        "desktopTemplate": "target/packaging/engys.desktop"
       }
     }
   },

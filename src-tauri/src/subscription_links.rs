@@ -6,7 +6,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 pub const MAX_LINK_BYTES: usize = 16 * 1024;
 
 pub fn is_link(value: &str) -> bool {
-    const PREFIX: &str = "mihomo-client://";
+    const PREFIX: &str = "engys://";
     value.len() <= MAX_LINK_BYTES
         && value
             .get(..PREFIX.len())

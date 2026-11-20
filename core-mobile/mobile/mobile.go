@@ -2,7 +2,7 @@
 //
 // The Android host callbacks and VPN hooks are adapted from FlClash by
 // chen08209 and contributors. The listener shutdown sequence is adapted from
-// FlClashX by pluralplay and contributors. Mihomo Client modified these
+// FlClashX by pluralplay and contributors. engys modified these
 // sections for its Android host interface and core lifecycle on 2026-11-19.
 // The adapted code is distributed under the GNU General Public License,
 // version 3. See the repository LICENSE and the README Credits section.

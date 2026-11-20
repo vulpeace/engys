@@ -8,9 +8,9 @@ export type SubscriptionLink = {
 
 export function parseSubscriptionLink(value: string): SubscriptionLink {
 	const link = new URL(value);
-	if (link.protocol !== 'mihomo-client:' || link.host !== 'import-sub' ||
+	if (link.protocol !== 'engys:' || link.host !== 'import-sub' ||
 		link.username || link.password || (link.pathname && link.pathname !== '/')) {
-		throw new Error('Unsupported Mihomo Client link.');
+		throw new Error('Unsupported engys link.');
 	}
 
 	const urls = link.searchParams.getAll('url');

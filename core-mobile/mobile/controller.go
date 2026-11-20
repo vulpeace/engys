@@ -29,7 +29,7 @@ func init() {
 	// The endpoint is inside mihomo's authenticated API group. It distinguishes
 	// two clients even when a subscription supplies the same controller secret.
 	route.Register(func(router chi.Router) {
-		router.Get("/mihomo-client/instance", func(w http.ResponseWriter, r *http.Request) {
+		router.Get("/engys/instance", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte(controllerIdentity))
 		})

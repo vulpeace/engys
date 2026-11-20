@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Mihomo Client",
+  "productName": "engys",
   "version": "../package.json",
-  "identifier": "dev.mihomo.client",
+  "identifier": "top.vulpeace.engys",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Mihomo Client",
+        "title": "engys",
         "visible": false,
         "width": 1180,
         "height": 760,
@@ -27,12 +27,16 @@
   },
   "plugins": {
     "deep-link": {
-      "desktop": { "schemes": ["mihomo-client"] },
-      "mobile": [{ "scheme": ["mihomo-client"], "host": "import-sub", "appLink": false }]
+      "desktop": { "schemes": ["engys"] },
+      "mobile": [{ "scheme": ["engys"], "host": "import-sub", "appLink": false }]
     }
   },
   "bundle": {
     "active": true,
+    "publisher": "vulpeace",
+    "homepage": "https://github.com/vulpeace/engys",
+    "license": "GPL-3.0-only",
+    "licenseFile": "../LICENSE",
     "targets": "all",
     "icon": [
       "icons/32x32.png",

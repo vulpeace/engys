@@ -192,7 +192,7 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 #[cfg(target_os = "linux")]
                 if app.env().appimage.is_some()
-                    && matches!(app.deep_link().is_registered("mihomo-client"), Ok(false))
+                    && matches!(app.deep_link().is_registered("engys"), Ok(false))
                 {
                     if let Err(error) = app.deep_link().register_all() {
                         log::warn!("Could not register subscription links: {error}");

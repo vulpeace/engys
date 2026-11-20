@@ -155,7 +155,7 @@ async fn core_proxy_port(app: &AppHandle) -> Option<u16> {
 /// one, since GitHub may be slow or blocked without a proxy.
 async fn client(app: &AppHandle) -> Result<reqwest::Client> {
     let mut b = reqwest::Client::builder()
-        .user_agent("mihomo-client")
+        .user_agent("engys")
         .https_only(true)
         .connect_timeout(Duration::from_secs(15));
     if let Some(port) = core_proxy_port(app).await {

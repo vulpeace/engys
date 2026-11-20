@@ -18,6 +18,8 @@ pnpm android:dev
 
 The Android Gradle project is already initialized and tracked in `src-tauri/gen/android`; do not reinitialize it during normal builds. It includes the SDK/toolchain configuration and network-security policy. Native service code lives in `src-tauri/plugins/android-vpn/android`.
 
+If this checkout built the previous Android package, remove the stale generated Kotlin directory at `src-tauri/gen/android/app/src/main/java/dev/mihomo/client/generated` before building engys. Tauri now generates those sources under `top/vulpeace/engys/generated`.
+
 Gradle builds `core-mobile` using pinned gomobile tools and mihomo dependencies, then packages the Java bindings and native libraries together. It follows Tauri's selected ABI list; `-Pmihomo.core.targets=android/arm64` can override Go targets when invoking Gradle directly. Go sources, checksums, and ABI selection are build inputs.
 
 APKs are written under `src-tauri/gen/android/app/build/outputs/apk`. Debug APKs use Android's development signing key.
@@ -38,7 +40,7 @@ Initialize the release identity once:
 python3 scripts/android-signing.py
 ```
 
-The script creates `release.p12` and `release.properties` in `$XDG_DATA_HOME/mihomo-client/signing` (default `~/.local/share/mihomo-client/signing`). Files are private to the current user, and the randomly generated password is never printed or passed in command arguments. Back up both files securely; future updates must use the same keystore. The script refuses to replace an existing identity.
+The script creates `release.p12` and `release.properties` in `$XDG_DATA_HOME/engys/signing` (default `~/.local/share/engys/signing`). Files are private to the current user, and the randomly generated password is never printed or passed in command arguments. Back up both files securely; future updates must use the same keystore. The script refuses to replace an existing identity.
 
 Normal builds discover these credentials automatically:
 

@@ -10,7 +10,7 @@ if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-
 // Properties dialogs read this key rather than the version in the filename.
 const directory = new URL('src-tauri/target/packaging/', root);
 await mkdir(directory, { recursive: true });
-await writeFile(new URL('mihomo-client.desktop', directory), `[Desktop Entry]
+await writeFile(new URL('engys.desktop', directory), `[Desktop Entry]
 Categories={{categories}}
 {{#if comment}}
 Comment={{comment}}

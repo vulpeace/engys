@@ -1,10 +1,10 @@
 [package]
-name = "mihomo-client"
+name = "engys"
 version = "1.1.0"
 description = "Desktop GUI for the mihomo proxy core"
-authors = []
-license = ""
-repository = ""
+authors = ["vulpeace"]
+license = "GPL-3.0-only"
+repository = "https://github.com/vulpeace/engys"
 edition = "2024"
 rust-version = "1.90"
 

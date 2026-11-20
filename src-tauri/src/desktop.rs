@@ -41,13 +41,13 @@ pub fn show(app: &AppHandle) {
 
 pub fn setup(app: &AppHandle) -> Result<()> {
     let status = MenuItem::with_id(app, "status", "Core stopped", false, None::<&str>)?;
-    let open = MenuItem::with_id(app, "open", "Open Mihomo Client", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open engys", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&status, &separator, &open, &quit])?;
     let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("Mihomo Client — core stopped")
+        .tooltip("engys — core stopped")
         .show_menu_on_left_click(!cfg!(windows))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show(app),
@@ -90,7 +90,7 @@ pub fn update(app: &AppHandle, running: bool, error: Option<&str>) {
         let _ = state.status.set_text(text);
     }
     if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_tooltip(Some(format!("Mihomo Client — {text}")));
+        let _ = tray.set_tooltip(Some(format!("engys — {text}")));
     }
 }
 

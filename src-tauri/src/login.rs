@@ -24,7 +24,7 @@ mod platform {
             .filter(|p| p.is_absolute())
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
             .ok_or_else(|| Error::msg("Cannot find the user configuration directory."))?;
-        Ok(config.join("autostart/dev.mihomo.client.desktop"))
+        Ok(config.join("autostart/top.vulpeace.engys.desktop"))
     }
 
     fn executable() -> Result<PathBuf> {
@@ -52,7 +52,7 @@ mod platform {
             })
             .collect::<String>();
         Ok(format!(
-            "[Desktop Entry]\nType=Application\nName=Mihomo Client\nExec=\"{quoted}\" --autostart\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+            "[Desktop Entry]\nType=Application\nName=engys\nExec=\"{quoted}\" --autostart\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
         ))
     }
 
